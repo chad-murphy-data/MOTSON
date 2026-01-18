@@ -497,23 +497,53 @@ async def get_results(matchweek: Optional[int] = None):
 
 
 # Serve React frontend (in production)
-frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "build")
-frontend_static_path = os.path.join(frontend_path, "static")
+# Try multiple possible locations for the frontend build
+possible_frontend_paths = [
+    os.path.join(os.path.dirname(__file__), "..", "frontend", "build"),  # Local dev
+    "/app/frontend/build",  # Docker
+    os.path.join(os.getcwd(), "frontend", "build"),  # CWD-relative
+]
 
-if os.path.exists(frontend_path) and os.path.exists(frontend_static_path):
-    app.mount("/static", StaticFiles(directory=frontend_static_path), name="static")
+frontend_path = None
+frontend_static_path = None
+
+for path in possible_frontend_paths:
+    static_path = os.path.join(path, "static")
+    index_path = os.path.join(path, "index.html")
+    if os.path.exists(path) and os.path.exists(index_path):
+        frontend_path = path
+        frontend_static_path = static_path if os.path.exists(static_path) else None
+        logger.info(f"Found frontend build at: {path}")
+        break
+
+if frontend_path:
+    # Mount static files if they exist
+    if frontend_static_path:
+        app.mount("/static", StaticFiles(directory=frontend_static_path), name="static")
+
+    # Mount assets folder if it exists (Vite puts files there)
+    assets_path = os.path.join(frontend_path, "assets")
+    if os.path.exists(assets_path):
+        app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
 
     @app.get("/{full_path:path}")
     async def serve_react(full_path: str):
         """Serve React frontend for all non-API routes."""
-        if full_path.startswith("api/") or full_path in ["health", "docs", "openapi.json"]:
+        # Don't catch API routes
+        if full_path.startswith("api/") or full_path in ["health", "docs", "openapi.json", "redoc"]:
             raise HTTPException(status_code=404)
+
+        # Try to serve the file directly first (for favicon, etc.)
+        file_path = os.path.join(frontend_path, full_path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+
+        # Otherwise serve index.html for client-side routing
         index_path = os.path.join(frontend_path, "index.html")
-        if os.path.exists(index_path):
-            return FileResponse(index_path)
-        raise HTTPException(status_code=404, detail="Frontend not built")
+        return FileResponse(index_path)
 else:
-    logger.info("Frontend build not found - API-only mode")
+    logger.warning(f"Frontend build not found in any of: {possible_frontend_paths}")
+    logger.info("Running in API-only mode")
 
 
 if __name__ == "__main__":
