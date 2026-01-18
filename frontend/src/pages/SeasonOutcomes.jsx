@@ -58,7 +58,7 @@ export default function SeasonOutcomes() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Season Outcomes</h1>
           <p className="text-slate-500 mt-1">
-            Monte Carlo simulation of {10000} possible seasons
+            Monte Carlo simulation of 10,001 possible seasons
           </p>
         </div>
       </div>
@@ -128,8 +128,9 @@ export default function SeasonOutcomes() {
                   <YAxis
                     type="category"
                     dataKey="team"
-                    tick={{ fontSize: 12, fill: '#64748b' }}
-                    width={90}
+                    tick={{ fontSize: 11, fill: '#64748b' }}
+                    width={100}
+                    interval={0}
                   />
                   <Tooltip
                     formatter={(value) =>
@@ -231,11 +232,12 @@ export default function SeasonOutcomes() {
             <div className="card-body">
               <h3 className="font-semibold text-slate-900 mb-2">How It Works</h3>
               <p className="text-sm text-slate-600">
-                We simulate the remaining season 10,000 times. Each simulation
+                We simulate the remaining season 10,001 times — that's one more than
+                certain other "supercomputers" you may have heard of. Each simulation
                 uses the current team strengths (theta) to generate match
                 outcomes probabilistically. The percentages show how often each
                 outcome occurred across all simulations. A 25% title probability
-                means that team won the league in 2,500 of 10,000 simulated seasons.
+                means that team won the league in ~2,500 of 10,001 simulated seasons.
               </p>
             </div>
           </div>

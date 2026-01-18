@@ -575,11 +575,15 @@ async def trigger_update(background_tasks: BackgroundTasks):
         db.set_metadata("current_week", str(result["week"]))
         db.set_metadata("last_update", datetime.utcnow().isoformat())
 
-        # Also cache fixtures, match predictions, and standings
+        # Also cache fixtures, match results, predictions, and standings
         try:
             api = FootballDataAPI()
             all_fixtures = await api.get_all_fixtures()
             db.save_fixtures(all_fixtures)
+
+            # Save finished match results for counterfactual page
+            finished_matches = await api.get_finished_matches()
+            db.save_match_results(finished_matches)
 
             # Generate and save match predictions for upcoming fixtures
             upcoming_fixtures = [f for f in all_fixtures if f.status != "FINISHED"]
@@ -594,7 +598,7 @@ async def trigger_update(background_tasks: BackgroundTasks):
             standings = await api.get_standings()
             db.save_standings(standings)
 
-            logger.info(f"Cached {len(all_fixtures)} fixtures, {len(match_preds)} predictions, standings")
+            logger.info(f"Cached {len(all_fixtures)} fixtures, {len(finished_matches)} results, {len(match_preds)} predictions, standings")
         except Exception as cache_error:
             logger.warning(f"Failed to cache fixtures/standings (non-critical): {cache_error}")
 

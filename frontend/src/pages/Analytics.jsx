@@ -258,6 +258,8 @@ function PointsChart({ data, selectedTeams }) {
     );
   }
 
+  const hasMultipleWeeks = data.weeks.length > 1;
+
   // Transform data for recharts
   const chartData = data.weeks.map(week => {
     const point = { week };
@@ -270,6 +272,22 @@ function PointsChart({ data, selectedTeams }) {
     });
     return point;
   });
+
+  if (!hasMultipleWeeks) {
+    return (
+      <div className="card">
+        <div className="card-body text-center py-8">
+          <p className="text-slate-500 mb-2">
+            Only 1 week of data available (Week {data.weeks[0]})
+          </p>
+          <p className="text-xs text-slate-400">
+            Historical trends will appear as more matchweeks are tracked.
+            The scheduled update runs automatically after each matchday.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="card">
@@ -337,6 +355,8 @@ function StrengthChart({ data, selectedTeams }) {
     );
   }
 
+  const hasMultipleWeeks = data.weeks.length > 1;
+
   // Transform data for recharts
   const chartData = data.weeks.map(week => {
     const point = { week };
@@ -348,6 +368,22 @@ function StrengthChart({ data, selectedTeams }) {
     });
     return point;
   });
+
+  if (!hasMultipleWeeks) {
+    return (
+      <div className="card">
+        <div className="card-body text-center py-8">
+          <p className="text-slate-500 mb-2">
+            Only 1 week of data available (Week {data.weeks[0]})
+          </p>
+          <p className="text-xs text-slate-400">
+            Historical strength trajectories will appear as more matchweeks are tracked.
+            The scheduled update runs automatically after each matchday.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="card">

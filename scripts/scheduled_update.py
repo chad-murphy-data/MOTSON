@@ -163,12 +163,17 @@ async def run_update_pipeline(db: Database, force: bool = False) -> dict:
     db.set_metadata("current_week", str(result["week"]))
     db.set_metadata("last_update", datetime.utcnow().isoformat())
 
-    # Fetch and store all fixtures and standings
-    logger.info("Fetching and caching fixtures, predictions, and standings...")
+    # Fetch and store all fixtures, results, and standings
+    logger.info("Fetching and caching fixtures, results, predictions, and standings...")
     try:
         all_fixtures = await api.get_all_fixtures()
         db.save_fixtures(all_fixtures)
         logger.info(f"Saved {len(all_fixtures)} fixtures to database")
+
+        # Save finished match results for counterfactual page
+        finished_matches = await api.get_finished_matches()
+        db.save_match_results(finished_matches)
+        logger.info(f"Saved {len(finished_matches)} match results to database")
 
         # Generate and save match predictions for all upcoming fixtures
         upcoming_fixtures = [f for f in all_fixtures if f.status != "FINISHED"]
