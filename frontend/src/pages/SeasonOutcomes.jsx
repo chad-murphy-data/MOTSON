@@ -29,9 +29,16 @@ export default function SeasonOutcomes() {
   const isLoading = probsQuery.isLoading;
   const predictions = probsQuery.data?.predictions || [];
 
-  // Sort by different criteria based on view
+  // Sort by different criteria based on view and convert probabilities to percentages for chart
   const sortedData = React.useMemo(() => {
-    const sorted = [...predictions];
+    const sorted = [...predictions].map(p => ({
+      ...p,
+      // Convert probabilities to percentages for chart display
+      title_prob_pct: p.title_prob * 100,
+      top4_prob_pct: p.top4_prob * 100,
+      top6_prob_pct: p.top6_prob * 100,
+      relegation_prob_pct: p.relegation_prob * 100,
+    }));
     switch (view) {
       case 'title':
         return sorted.sort((a, b) => b.title_prob - a.title_prob);
@@ -128,7 +135,7 @@ export default function SeasonOutcomes() {
                     formatter={(value) =>
                       view === 'overview'
                         ? [value.toFixed(1), 'Expected Position']
-                        : [`${(value * 100).toFixed(1)}%`, 'Probability']
+                        : [`${value.toFixed(1)}%`, 'Probability']
                     }
                     contentStyle={{
                       backgroundColor: 'white',
@@ -139,11 +146,11 @@ export default function SeasonOutcomes() {
                   <Bar
                     dataKey={
                       view === 'title'
-                        ? 'title_prob'
+                        ? 'title_prob_pct'
                         : view === 'top4'
-                        ? 'top4_prob'
+                        ? 'top4_prob_pct'
                         : view === 'relegation'
-                        ? 'relegation_prob'
+                        ? 'relegation_prob_pct'
                         : 'expected_position'
                     }
                     radius={[0, 4, 4, 0]}

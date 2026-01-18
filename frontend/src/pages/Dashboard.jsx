@@ -4,7 +4,6 @@ import { Link } from 'react-router-dom';
 import {
   Trophy,
   TrendingUp,
-  TrendingDown,
   AlertTriangle,
   ChevronRight,
   RefreshCw,
@@ -15,12 +14,12 @@ import {
   getCurrentStandings,
   getTitleRace,
   getRelegationBattle,
+  getSeasonProbabilities,
   getNextWeekPredictions,
   triggerUpdate,
 } from '../api';
 
 import ProbabilityBar from '../components/ProbabilityBar';
-import PositionBadge from '../components/PositionBadge';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorMessage from '../components/ErrorMessage';
 
@@ -40,6 +39,23 @@ export default function Dashboard() {
     queryFn: getRelegationBattle,
   });
 
+  const seasonProbsQuery = useQuery({
+    queryKey: ['seasonProbabilities'],
+    queryFn: getSeasonProbabilities,
+  });
+
+  // Get top 4 probabilities sorted by top4_prob
+  const top4Data = React.useMemo(() => {
+    const predictions = seasonProbsQuery.data?.predictions || [];
+    return [...predictions]
+      .sort((a, b) => b.top4_prob - a.top4_prob)
+      .slice(0, 6)
+      .map(team => ({
+        team: team.team,
+        probability: team.top4_prob,
+      }));
+  }, [seasonProbsQuery.data]);
+
   const predictionsQuery = useQuery({
     queryKey: ['nextPredictions'],
     queryFn: getNextWeekPredictions,
@@ -55,6 +71,7 @@ export default function Dashboard() {
       standingsQuery.refetch();
       titleQuery.refetch();
       relegationQuery.refetch();
+      seasonProbsQuery.refetch();
       predictionsQuery.refetch();
     } catch (error) {
       console.error('Update failed:', error);
@@ -102,8 +119,10 @@ export default function Dashboard() {
           <div className="card-body">
             {titleQuery.isLoading ? (
               <LoadingSpinner />
-            ) : titleQuery.error ? (
-              <ErrorMessage message="Failed to load title race" />
+            ) : titleQuery.error || !titleQuery.data?.title_race?.length ? (
+              <div className="text-center py-4 text-sm text-slate-500">
+                Run "Update Predictions" to see title race probabilities
+              </div>
             ) : (
               <div className="space-y-4">
                 {titleQuery.data?.title_race?.slice(0, 5).map((team, idx) => (
@@ -143,21 +162,28 @@ export default function Dashboard() {
               <TrendingUp className="w-5 h-5 text-blue-500 mr-2" />
               Champions League
             </h2>
+            <Link
+              to="/outcomes"
+              className="text-primary-500 hover:text-primary-600 text-sm flex items-center"
+            >
+              View all <ChevronRight className="w-4 h-4" />
+            </Link>
           </div>
           <div className="card-body">
-            {standingsQuery.isLoading ? (
+            {seasonProbsQuery.isLoading ? (
               <LoadingSpinner />
-            ) : standingsQuery.error ? (
-              <ErrorMessage message="Failed to load standings" />
+            ) : seasonProbsQuery.error || !top4Data.length ? (
+              <div className="text-center py-4 text-sm text-slate-500">
+                Run "Update Predictions" to see Top 4 probabilities
+              </div>
             ) : (
-              <div className="space-y-3">
-                {standingsQuery.data?.standings?.slice(0, 6).map((team) => (
-                  <div
-                    key={team.team}
-                    className="flex items-center justify-between"
-                  >
+              <div className="space-y-4">
+                {top4Data.map((team, idx) => (
+                  <div key={team.team} className="flex items-center justify-between">
                     <div className="flex items-center space-x-3">
-                      <PositionBadge position={team.position} />
+                      <span className="text-sm font-medium text-slate-500 w-4">
+                        {idx + 1}
+                      </span>
                       <Link
                         to={`/team/${encodeURIComponent(team.team)}`}
                         className="font-medium text-slate-900 hover:text-primary-600"
@@ -165,11 +191,15 @@ export default function Dashboard() {
                         {team.team}
                       </Link>
                     </div>
-                    <div className="text-right">
-                      <span className="font-semibold text-slate-900">
-                        {team.points}
+                    <div className="flex items-center space-x-3">
+                      <ProbabilityBar
+                        value={team.probability}
+                        color="blue"
+                        width={100}
+                      />
+                      <span className="text-sm font-semibold text-slate-700 w-12 text-right">
+                        {(team.probability * 100).toFixed(1)}%
                       </span>
-                      <span className="text-xs text-slate-500 ml-1">pts</span>
                     </div>
                   </div>
                 ))}
@@ -195,8 +225,10 @@ export default function Dashboard() {
           <div className="card-body">
             {relegationQuery.isLoading ? (
               <LoadingSpinner />
-            ) : relegationQuery.error ? (
-              <ErrorMessage message="Failed to load relegation data" />
+            ) : relegationQuery.error || !relegationQuery.data?.relegation_battle?.length ? (
+              <div className="text-center py-4 text-sm text-slate-500">
+                Run "Update Predictions" to see relegation probabilities
+              </div>
             ) : (
               <div className="space-y-4">
                 {relegationQuery.data?.relegation_battle?.slice(0, 5).map((team, idx) => (

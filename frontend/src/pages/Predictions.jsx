@@ -9,7 +9,7 @@ import ErrorMessage from '../components/ErrorMessage';
 import ProbabilityBar from '../components/ProbabilityBar';
 
 export default function Predictions() {
-  const [selectedWeek, setSelectedWeek] = React.useState(null);
+  const [selectedWeek, setSelectedWeek] = React.useState(1);
 
   // Get current week from first query
   const nextWeekQuery = useQuery({
@@ -21,9 +21,9 @@ export default function Predictions() {
     },
   });
 
-  // Set initial week once we know current
+  // Set initial week to current matchweek once we know it
   React.useEffect(() => {
-    if (nextWeekQuery.data?.week && selectedWeek === null) {
+    if (nextWeekQuery.data?.week && selectedWeek === 1) {
       setSelectedWeek(nextWeekQuery.data.week);
     }
   }, [nextWeekQuery.data, selectedWeek]);
@@ -31,13 +31,13 @@ export default function Predictions() {
   const predictionsQuery = useQuery({
     queryKey: ['predictions', selectedWeek],
     queryFn: () => getWeekPredictions(selectedWeek),
-    enabled: selectedWeek !== null,
+    enabled: selectedWeek > 0,
   });
 
   const resultsQuery = useQuery({
     queryKey: ['results', selectedWeek],
     queryFn: () => getResults(selectedWeek),
-    enabled: selectedWeek !== null,
+    enabled: selectedWeek > 0,
   });
 
   const isLoading = predictionsQuery.isLoading;
