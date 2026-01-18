@@ -1,0 +1,96 @@
+name: Update MOTSON Predictions
+
+on:
+  schedule:
+    # Run at 6 AM UTC on match result days
+    # Sunday - after Saturday matches
+    # Monday - after Sunday matches
+    # Tuesday - after Monday Night Football
+    # Wednesday - after midweek fixtures (Tue)
+    # Thursday - after midweek fixtures (Wed)
+    - cron: '0 6 * * 0,1,2,3,4'
+
+  # Allow manual trigger for testing/admin use
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force update even if no new results'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  update-predictions:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run scheduled update
+        env:
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+        run: |
+          if [ "${{ github.event.inputs.force }}" == "true" ]; then
+            python scripts/scheduled_update.py --force
+          else
+            python scripts/scheduled_update.py
+          fi
+
+      - name: Check for changes
+        id: check_changes
+        run: |
+          git add -A
+          if git diff --staged --quiet; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "No changes to commit"
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "Changes detected:"
+            git diff --staged --name-only
+          fi
+
+      - name: Commit and push changes
+        if: steps.check_changes.outputs.has_changes == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          # Get the current matchweek from last_update.json if it exists
+          if [ -f "data/last_update.json" ]; then
+            WEEK=$(python -c "import json; print(json.load(open('data/last_update.json'))['last_matchweek'])")
+            COMMIT_MSG="Update predictions for matchweek $WEEK"
+          else
+            COMMIT_MSG="Update MOTSON predictions"
+          fi
+
+          git commit -m "$COMMIT_MSG
+
+          Automated update via GitHub Actions
+
+          Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+
+          git push
+
+      - name: Summary
+        run: |
+          echo "## Update Summary" >> $GITHUB_STEP_SUMMARY
+          if [ -f "data/last_update.json" ]; then
+            echo "### Last Update Info" >> $GITHUB_STEP_SUMMARY
+            cat data/last_update.json >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No update was performed (no new results or first run)" >> $GITHUB_STEP_SUMMARY
+          fi

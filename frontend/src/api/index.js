@@ -67,3 +67,4 @@ export const triggerUpdate = () =>
   fetchApi('/admin/update', { method: 'POST' });
 export const getUpdateExplanations = () => fetchApi('/admin/explanations');
 export const getModelConfig = () => fetchApi('/admin/config');
+export const getLastUpdate = () => fetchApi('/admin/last-update');

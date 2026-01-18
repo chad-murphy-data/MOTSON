@@ -1,0 +1,4 @@
+# This file ensures the data directory is tracked by git
+# The following files will be created by GitHub Actions:
+# - motson.db - SQLite database with predictions
+# - last_update.json - Metadata about the last update

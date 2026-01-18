@@ -14,9 +14,10 @@ pip-delete-this-directory.txt
 .env
 .env.local
 
-# Database
-*.db
+# Database (allow motson.db to be tracked for GitHub Actions updates)
+# *.db  -- commented out to allow data/motson.db
 *.sqlite3
+!data/motson.db
 
 # Node
 node_modules/

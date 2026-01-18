@@ -544,6 +544,35 @@ async def get_update_explanations():
     }
 
 
+@app.get("/admin/last-update")
+async def get_last_update_info():
+    """Get information about the last update (for dashboard timestamp display)."""
+    import json
+    from pathlib import Path
+
+    # Try to read from last_update.json file first (written by scheduled_update.py)
+    last_update_path = Path(__file__).parent.parent / "data" / "last_update.json"
+
+    if last_update_path.exists():
+        with open(last_update_path, "r") as f:
+            return json.load(f)
+
+    # Fall back to database metadata
+    db = get_db()
+    current_week = db.get_metadata("current_week")
+    last_update = db.get_metadata("last_update")
+
+    if current_week or last_update:
+        return {
+            "last_matchweek": int(current_week) if current_week else 0,
+            "last_update_timestamp": last_update,
+            "teams_updated": [],
+            "simulations_run": model_config.DEFAULT_SIMULATIONS,
+        }
+
+    raise HTTPException(status_code=404, detail="No update has been run yet")
+
+
 @app.get("/admin/config")
 async def get_model_config():
     """Get current model configuration."""

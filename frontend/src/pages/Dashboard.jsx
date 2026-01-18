@@ -17,6 +17,7 @@ import {
   getSeasonProbabilities,
   getNextWeekPredictions,
   triggerUpdate,
+  getLastUpdate,
 } from '../api';
 
 import ProbabilityBar from '../components/ProbabilityBar';
@@ -61,7 +62,15 @@ export default function Dashboard() {
     queryFn: getNextWeekPredictions,
   });
 
+  const lastUpdateQuery = useQuery({
+    queryKey: ['lastUpdate'],
+    queryFn: getLastUpdate,
+    staleTime: 60000, // Cache for 1 minute
+    retry: false, // Don't retry if no update exists yet
+  });
+
   const [isUpdating, setIsUpdating] = React.useState(false);
+  const [showAdminUpdate, setShowAdminUpdate] = React.useState(false);
 
   const handleUpdate = async () => {
     setIsUpdating(true);
@@ -73,11 +82,31 @@ export default function Dashboard() {
       relegationQuery.refetch();
       seasonProbsQuery.refetch();
       predictionsQuery.refetch();
+      lastUpdateQuery.refetch();
     } catch (error) {
       console.error('Update failed:', error);
     } finally {
       setIsUpdating(false);
     }
+  };
+
+  // Format last update timestamp
+  const formatLastUpdate = () => {
+    const data = lastUpdateQuery.data;
+    if (!data) return null;
+
+    const timestamp = data.last_update_timestamp;
+    if (!timestamp) return `Week ${data.last_matchweek}`;
+
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffHours = Math.floor((now - date) / (1000 * 60 * 60));
+
+    if (diffHours < 1) return 'Updated just now';
+    if (diffHours < 24) return `Updated ${diffHours}h ago (Week ${data.last_matchweek})`;
+
+    const diffDays = Math.floor(diffHours / 24);
+    return `Updated ${diffDays}d ago (Week ${data.last_matchweek})`;
   };
 
   return (
@@ -90,14 +119,33 @@ export default function Dashboard() {
             EPL predictions powered by Bayesian inference
           </p>
         </div>
-        <button
-          onClick={handleUpdate}
-          disabled={isUpdating}
-          className="mt-4 md:mt-0 flex items-center space-x-2 px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors disabled:opacity-50"
-        >
-          <RefreshCw className={`w-4 h-4 ${isUpdating ? 'animate-spin' : ''}`} />
-          <span>{isUpdating ? 'Updating...' : 'Update Predictions'}</span>
-        </button>
+        <div className="mt-4 md:mt-0 flex flex-col items-end space-y-2">
+          {/* Last Updated Timestamp */}
+          {lastUpdateQuery.data && (
+            <span className="text-sm text-slate-500">
+              {formatLastUpdate()}
+            </span>
+          )}
+
+          {/* Admin Update Button - Click timestamp to reveal */}
+          {!showAdminUpdate ? (
+            <button
+              onClick={() => setShowAdminUpdate(true)}
+              className="text-xs text-slate-400 hover:text-slate-600"
+            >
+              Admin
+            </button>
+          ) : (
+            <button
+              onClick={handleUpdate}
+              disabled={isUpdating}
+              className="flex items-center space-x-2 px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors disabled:opacity-50 text-sm"
+            >
+              <RefreshCw className={`w-3 h-3 ${isUpdating ? 'animate-spin' : ''}`} />
+              <span>{isUpdating ? 'Updating...' : 'Manual Update'}</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Stats Grid */}
