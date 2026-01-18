@@ -1,0 +1,31 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*.so
+.venv
+venv
+env
+.pytest_cache
+
+# Node
+frontend/node_modules
+frontend/build
+
+# IDE
+.idea
+.vscode
+*.swp
+
+# Temp files
+*.log
+*.db
+.env
+tmpclaude-*
+
+# Tests
+test_core.py
+tests/
