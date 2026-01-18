@@ -483,18 +483,24 @@ async def debug_api_data():
     try:
         all_fixtures = await api.get_all_fixtures()
         finished = [f for f in all_fixtures if f.status == "FINISHED"]
-        scheduled = [f for f in all_fixtures if f.status == "SCHEDULED"]
+        remaining = [f for f in all_fixtures if f.status != "FINISHED"]
+
+        # Count by status
+        status_counts = {}
+        for f in all_fixtures:
+            status_counts[f.status] = status_counts.get(f.status, 0) + 1
 
         return {
             "configured_season": app_config.CURRENT_SEASON,
             "total_fixtures": len(all_fixtures),
             "finished_count": len(finished),
-            "scheduled_count": len(scheduled),
-            "fixture_statuses": list(set(f.status for f in all_fixtures)),
-            "matchweeks_with_finished": sorted(set(f.matchweek for f in finished)) if finished else [],
-            "matchweeks_with_scheduled": sorted(set(f.matchweek for f in scheduled)) if scheduled else [],
+            "remaining_count": len(remaining),
+            "status_counts": status_counts,
+            "all_statuses": list(set(f.status for f in all_fixtures)),
+            "matchweeks_finished": sorted(set(f.matchweek for f in finished)) if finished else [],
+            "matchweeks_remaining": sorted(set(f.matchweek for f in remaining)) if remaining else [],
             "sample_finished": [f.to_dict() for f in finished[:3]] if finished else [],
-            "sample_scheduled": [f.to_dict() for f in scheduled[:3]] if scheduled else [],
+            "sample_remaining": [f.to_dict() for f in remaining[:3]] if remaining else [],
         }
     except Exception as e:
         return {"error": str(e)}

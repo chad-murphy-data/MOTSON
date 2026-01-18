@@ -114,8 +114,10 @@ class WeeklyUpdatePipeline:
             if explanation.update_triggered:
                 logger.info(f"  {team_name}: {explanation.reason}")
 
-        # 5. Get remaining fixtures
-        remaining_fixtures = [f for f in all_fixtures if f.status == "SCHEDULED"]
+        # 5. Get remaining fixtures (anything not FINISHED)
+        # Note: API uses "TIMED" for scheduled matches, "SCHEDULED" is less common
+        remaining_fixtures = [f for f in all_fixtures if f.status != "FINISHED"]
+        logger.info(f"Found {len(remaining_fixtures)} remaining fixtures to simulate")
 
         # 6. Get current points
         current_points = {s["team"]: s["points"] for s in standings}
