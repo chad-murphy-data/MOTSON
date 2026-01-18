@@ -596,10 +596,13 @@ class Database:
 # Global database instance
 _db: Optional[Database] = None
 
+# Default database path - use data/motson.db relative to project root
+_DEFAULT_DB_PATH = Path(__file__).parent.parent.parent / "data" / "motson.db"
+
 
 def get_db() -> Database:
     """Get or create database instance."""
     global _db
     if _db is None:
-        _db = Database()
+        _db = Database(str(_DEFAULT_DB_PATH))
     return _db
