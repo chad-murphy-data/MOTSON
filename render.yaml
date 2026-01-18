@@ -1,0 +1,40 @@
+# Render Blueprint Specification
+# Deploy with: https://render.com/deploy
+
+services:
+  # Combined Web Service (Backend + Frontend)
+  - type: web
+    name: motson
+    runtime: python
+    buildCommand: |
+      pip install -r requirements.txt
+      cd frontend && npm install && npm run build && cd ..
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: NODE_VERSION
+        value: "20"
+      - key: FOOTBALL_DATA_API_KEY
+        sync: false  # User must provide this
+      - key: DATABASE_URL
+        value: sqlite:///data/motson.db
+    healthCheckPath: /health
+    autoDeploy: true
+    plan: free  # or starter for better performance
+
+  # Cron Job for Weekly Updates
+  - type: cron
+    name: motson-weekly-update
+    runtime: python
+    schedule: "0 6 * * 1"  # Every Monday at 6 AM UTC
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -c "import asyncio; from backend.services.weekly_update import WeeklyUpdatePipeline; from backend.services import load_initial_team_states; pipeline = WeeklyUpdatePipeline(); states = load_initial_team_states('data'); asyncio.run(pipeline.run_update(states))"
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: FOOTBALL_DATA_API_KEY
+        fromService:
+          type: web
+          name: motson
+          envVarKey: FOOTBALL_DATA_API_KEY
