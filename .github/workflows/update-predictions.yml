@@ -19,6 +19,9 @@ on:
         default: 'false'
         type: boolean
 
+permissions:
+  contents: write
+
 jobs:
   update-predictions:
     runs-on: ubuntu-latest
