@@ -10,10 +10,7 @@ Usage:
     python scripts/backfill_history.py [--start-week 0] [--end-week 22]
 """
 
-import os
 import sys
-import json
-import asyncio
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -23,7 +20,6 @@ from typing import Dict, List
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from backend.services.data_fetcher import FootballDataAPI
 from backend.services.monte_carlo import MonteCarloSimulator
 from backend.models.team_state import TeamState, SeasonPrediction, MatchResult, Fixture
 from backend.models.bayesian_engine import BayesianEngine, predict_match, initialize_team_states
@@ -43,30 +39,36 @@ DATA_DIR = project_root / "data"
 DB_PATH = DATA_DIR / "motson.db"
 
 
-async def get_all_match_data(api: FootballDataAPI):
-    """Fetch all fixtures and results from the API."""
-    all_fixtures = await api.get_all_fixtures()
-    standings = await api.get_standings()
+def get_all_match_data_from_db(db: Database):
+    """Get all fixtures and results from the database (no API calls needed)."""
+    # Get match results (finished matches with scores)
+    results = db.get_match_results()
+    logger.info(f"Loaded {len(results)} match results from database")
 
-    # Separate finished and remaining
-    finished = [f for f in all_fixtures if f.status == "FINISHED"]
+    # Get all fixtures
+    fixture_dicts = db.get_fixtures()
+    all_fixtures = []
+    for f in fixture_dicts:
+        fixture = Fixture(
+            match_id=f["match_id"],
+            matchweek=f["matchweek"],
+            date=datetime.fromisoformat(f["date"]) if isinstance(f["date"], str) else f["date"],
+            home_team=f["home_team"],
+            away_team=f["away_team"],
+            status=f.get("status", "SCHEDULED"),
+        )
+        # Add goal data for finished matches
+        if f.get("status") == "FINISHED":
+            fixture.home_goals = f.get("home_goals")
+            fixture.away_goals = f.get("away_goals")
+        all_fixtures.append(fixture)
 
-    # Convert finished fixtures to MatchResult objects
-    results = []
-    for f in finished:
-        # We need to get the scores - the fixture object should have them
-        if hasattr(f, 'home_goals') and f.home_goals is not None:
-            results.append(MatchResult(
-                match_id=f.match_id,
-                matchweek=f.matchweek,
-                date=f.date,
-                home_team=f.home_team,
-                away_team=f.away_team,
-                home_goals=f.home_goals,
-                away_goals=f.away_goals,
-            ))
+    logger.info(f"Loaded {len(all_fixtures)} fixtures from database")
 
-    return all_fixtures, results, standings
+    # Determine current matchweek from results
+    current_week = max([r.matchweek for r in results]) if results else 0
+
+    return all_fixtures, results, current_week
 
 
 def simulate_week(
@@ -191,7 +193,7 @@ def calculate_standings_at_week(results: List[MatchResult], week: int, teams: Li
     return points
 
 
-async def run_backfill(start_week: int = 0, end_week: int = None):
+def run_backfill(start_week: int = 0, end_week: int = None):
     """
     Run the historical backfill.
 
@@ -199,16 +201,13 @@ async def run_backfill(start_week: int = 0, end_week: int = None):
         start_week: First week to simulate (0 = preseason)
         end_week: Last week to simulate (None = current week)
     """
-    api = FootballDataAPI()
     simulator = MonteCarloSimulator()
     engine = BayesianEngine()
     db = Database(str(DB_PATH))
 
-    logger.info("Fetching all match data from API...")
-    all_fixtures, all_results, current_standings = await get_all_match_data(api)
+    logger.info("Loading match data from database (no API calls needed)...")
+    all_fixtures, all_results, current_week = get_all_match_data_from_db(db)
 
-    # Determine current week
-    current_week = await api.get_current_matchweek()
     if end_week is None:
         end_week = current_week
 
@@ -297,7 +296,7 @@ def main():
     DATA_DIR.mkdir(exist_ok=True)
 
     try:
-        asyncio.run(run_backfill(start_week=args.start_week, end_week=args.end_week))
+        run_backfill(start_week=args.start_week, end_week=args.end_week)
         logger.info("Backfill completed successfully!")
         sys.exit(0)
     except Exception as e:
