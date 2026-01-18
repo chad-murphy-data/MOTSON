@@ -181,10 +181,19 @@ async def health_check():
 
 @app.get("/standings/current")
 async def get_current_standings():
-    """Get current actual league standings from API."""
+    """Get current actual league standings - from database cache first, API fallback."""
+    db = get_db()
+
+    # Try database cache first
+    cached = db.get_cached_standings()
+    if cached:
+        return {"standings": cached, "source": "cached"}
+
+    # Fallback to API
     api = FootballDataAPI()
     try:
         standings = await api.get_standings()
+        db.save_standings(standings)  # Cache for next time
         return {"standings": standings, "source": "football-data.org"}
     except Exception as e:
         logger.error(f"Failed to fetch standings: {e}")
@@ -262,9 +271,21 @@ async def get_team_history(team_name: str):
 
 @app.get("/predictions/week/{week}")
 async def get_week_predictions(week: int):
-    """Get match predictions for a specific week."""
-    api = FootballDataAPI()
+    """Get match predictions for a specific week - from database first, API fallback."""
+    db = get_db()
 
+    # Try database first
+    cached_predictions = db.get_match_predictions(week)
+    if cached_predictions:
+        return {
+            "week": week,
+            "predictions": cached_predictions,
+            "count": len(cached_predictions),
+            "source": "cached",
+        }
+
+    # Fallback to API
+    api = FootballDataAPI()
     try:
         all_fixtures = await api.get_all_fixtures()
         week_fixtures = [f for f in all_fixtures if f.matchweek == week]
@@ -278,10 +299,14 @@ async def get_week_predictions(week: int):
                 pred = predict_match(fixture, team_states)
                 predictions.append(pred.to_dict())
 
+        # Cache for next time
+        db.save_match_predictions(predictions)
+
         return {
             "week": week,
             "predictions": predictions,
             "count": len(predictions),
+            "source": "football-data.org",
         }
     except HTTPException:
         raise
@@ -293,8 +318,16 @@ async def get_week_predictions(week: int):
 @app.get("/predictions/next")
 async def get_next_week_predictions():
     """Get predictions for the next unplayed matchweek."""
-    api = FootballDataAPI()
+    db = get_db()
 
+    # Try to get current week from database first
+    current_week = db.get_current_week()
+
+    if current_week > 0:
+        return await get_week_predictions(current_week + 1)
+
+    # Fallback to API
+    api = FootballDataAPI()
     try:
         current_week = await api.get_current_matchweek()
         return await get_week_predictions(current_week + 1)
@@ -452,12 +485,38 @@ async def run_counterfactual(scenarios: List[CounterfactualRequest]):
 
     "What if City had beaten Burnley in week 3?"
     """
-    api = FootballDataAPI()
+    from .models.team_state import Fixture
+
+    db = get_db()
     simulator = MonteCarloSimulator()
 
-    try:
-        all_fixtures = await api.get_all_fixtures()
+    # Try database first for fixtures
+    cached_fixtures = db.get_fixtures()
 
+    if cached_fixtures:
+        # Convert cached fixtures to Fixture objects
+        all_fixtures = [
+            Fixture(
+                match_id=f["match_id"],
+                matchweek=f["matchweek"],
+                date=datetime.fromisoformat(f["date"]) if isinstance(f["date"], str) else f["date"],
+                home_team=f["home_team"],
+                away_team=f["away_team"],
+                status=f["status"],
+            )
+            for f in cached_fixtures
+        ]
+    else:
+        # Fallback to API
+        api = FootballDataAPI()
+        try:
+            all_fixtures = await api.get_all_fixtures()
+            db.save_fixtures(all_fixtures)
+        except Exception as e:
+            logger.error(f"Failed to get fixtures: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    try:
         # Build counterfactual results dict
         cf_results = {s.match_id: s.result for s in scenarios}
 
@@ -515,6 +574,29 @@ async def trigger_update(background_tasks: BackgroundTasks):
 
         db.set_metadata("current_week", str(result["week"]))
         db.set_metadata("last_update", datetime.utcnow().isoformat())
+
+        # Also cache fixtures, match predictions, and standings
+        try:
+            api = FootballDataAPI()
+            all_fixtures = await api.get_all_fixtures()
+            db.save_fixtures(all_fixtures)
+
+            # Generate and save match predictions for upcoming fixtures
+            upcoming_fixtures = [f for f in all_fixtures if f.status != "FINISHED"]
+            match_preds = []
+            for fixture in upcoming_fixtures:
+                if fixture.home_team in team_states and fixture.away_team in team_states:
+                    pred = predict_match(fixture, team_states)
+                    match_preds.append(pred.to_dict())
+            db.save_match_predictions(match_preds)
+
+            # Cache standings
+            standings = await api.get_standings()
+            db.save_standings(standings)
+
+            logger.info(f"Cached {len(all_fixtures)} fixtures, {len(match_preds)} predictions, standings")
+        except Exception as cache_error:
+            logger.warning(f"Failed to cache fixtures/standings (non-critical): {cache_error}")
 
         last_update_result = result
 
@@ -627,8 +709,19 @@ async def debug_api_data():
 @app.get("/results")
 async def get_results(matchweek: Optional[int] = None):
     """Get match results, optionally filtered by matchweek."""
-    api = FootballDataAPI()
+    db = get_db()
 
+    # Try database first
+    db_results = db.get_match_results(matchweek)
+    if db_results:
+        return {
+            "results": [r.to_dict() for r in db_results],
+            "count": len(db_results),
+            "source": "cached",
+        }
+
+    # Fallback to API
+    api = FootballDataAPI()
     try:
         results = await api.get_finished_matches()
 
@@ -638,6 +731,7 @@ async def get_results(matchweek: Optional[int] = None):
         return {
             "results": [r.to_dict() for r in results],
             "count": len(results),
+            "source": "football-data.org",
         }
     except Exception as e:
         logger.error(f"Failed to fetch results: {e}")

@@ -458,6 +458,109 @@ class Database:
             for row in rows
         ]
 
+    # Fixtures
+
+    def save_fixture(self, fixture):
+        """Save a fixture."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO fixtures
+            (match_id, matchweek, date, home_team, away_team, status)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            fixture.match_id,
+            fixture.matchweek,
+            fixture.date.isoformat() if hasattr(fixture.date, 'isoformat') else str(fixture.date),
+            fixture.home_team,
+            fixture.away_team,
+            fixture.status,
+        ))
+
+        conn.commit()
+        conn.close()
+
+    def save_fixtures(self, fixtures: List):
+        """Save multiple fixtures."""
+        for fixture in fixtures:
+            self.save_fixture(fixture)
+
+    def get_fixtures(self, matchweek: Optional[int] = None) -> List[Dict]:
+        """Get fixtures, optionally filtered by matchweek."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        if matchweek:
+            cursor.execute("SELECT * FROM fixtures WHERE matchweek = ? ORDER BY date", (matchweek,))
+        else:
+            cursor.execute("SELECT * FROM fixtures ORDER BY matchweek, date")
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [dict(row) for row in rows]
+
+    # Match Predictions
+
+    def save_match_prediction(self, prediction: Dict):
+        """Save a match prediction."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO match_predictions
+            (match_id, matchweek, home_team, away_team, home_win_prob,
+             draw_prob, away_win_prob, confidence, predicted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            prediction["match_id"],
+            prediction["matchweek"],
+            prediction["home_team"],
+            prediction["away_team"],
+            prediction["home_win_prob"],
+            prediction["draw_prob"],
+            prediction["away_win_prob"],
+            prediction["confidence"],
+            datetime.utcnow().isoformat(),
+        ))
+
+        conn.commit()
+        conn.close()
+
+    def save_match_predictions(self, predictions: List[Dict]):
+        """Save multiple match predictions."""
+        for pred in predictions:
+            self.save_match_prediction(pred)
+
+    def get_match_predictions(self, matchweek: Optional[int] = None) -> List[Dict]:
+        """Get match predictions, optionally filtered by matchweek."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        if matchweek:
+            cursor.execute("SELECT * FROM match_predictions WHERE matchweek = ? ORDER BY match_id", (matchweek,))
+        else:
+            cursor.execute("SELECT * FROM match_predictions ORDER BY matchweek, match_id")
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [dict(row) for row in rows]
+
+    # Standings Cache
+
+    def save_standings(self, standings: List[Dict]):
+        """Save current standings to metadata as JSON."""
+        self.set_metadata("cached_standings", json.dumps(standings))
+
+    def get_cached_standings(self) -> Optional[List[Dict]]:
+        """Get cached standings from metadata."""
+        data = self.get_metadata("cached_standings")
+        if data:
+            return json.loads(data)
+        return None
+
     # Metadata
 
     def set_metadata(self, key: str, value: str):

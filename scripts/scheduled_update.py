@@ -28,6 +28,7 @@ from backend.services.data_fetcher import FootballDataAPI
 from backend.services.weekly_update import WeeklyUpdatePipeline, load_initial_team_states
 from backend.services.monte_carlo import MonteCarloSimulator
 from backend.models.team_state import SeasonPrediction
+from backend.models.bayesian_engine import predict_match
 from backend.database.db import Database
 from backend.config import model_config
 
@@ -161,6 +162,31 @@ async def run_update_pipeline(db: Database, force: bool = False) -> dict:
     # Update metadata
     db.set_metadata("current_week", str(result["week"]))
     db.set_metadata("last_update", datetime.utcnow().isoformat())
+
+    # Fetch and store all fixtures and standings
+    logger.info("Fetching and caching fixtures, predictions, and standings...")
+    try:
+        all_fixtures = await api.get_all_fixtures()
+        db.save_fixtures(all_fixtures)
+        logger.info(f"Saved {len(all_fixtures)} fixtures to database")
+
+        # Generate and save match predictions for all upcoming fixtures
+        upcoming_fixtures = [f for f in all_fixtures if f.status != "FINISHED"]
+        match_predictions = []
+        for fixture in upcoming_fixtures:
+            if fixture.home_team in team_states and fixture.away_team in team_states:
+                pred = predict_match(fixture, team_states)
+                match_predictions.append(pred.to_dict())
+        db.save_match_predictions(match_predictions)
+        logger.info(f"Saved {len(match_predictions)} match predictions to database")
+
+        # Cache current standings
+        standings = await api.get_standings()
+        db.save_standings(standings)
+        logger.info("Saved current standings to database")
+
+    except Exception as e:
+        logger.warning(f"Failed to cache fixtures/standings (non-critical): {e}")
 
     # Save last_update.json for quick checking
     save_last_update(
