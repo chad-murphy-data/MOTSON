@@ -1,0 +1,20 @@
+{
+  "last_matchweek": 22,
+  "last_update_timestamp": "2026-01-18T18:59:58.770425Z",
+  "teams_updated": [
+    "Arsenal",
+    "Aston Villa",
+    "Bournemouth",
+    "Burnley",
+    "Chelsea",
+    "Fulham",
+    "Liverpool",
+    "Manchester City",
+    "Manchester Utd",
+    "Sunderland",
+    "Tottenham",
+    "West Ham",
+    "Wolves"
+  ],
+  "simulations_run": 10000
+}
