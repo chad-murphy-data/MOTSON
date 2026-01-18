@@ -1,0 +1,81 @@
+name: Recalculate Team Thetas
+
+# Manual trigger only - this recalculates initial team strengths from historical data
+on:
+  workflow_dispatch:
+    inputs:
+      seasons:
+        description: 'Number of seasons to use (2-5)'
+        required: false
+        default: '3'
+        type: string
+      home_advantage:
+        description: 'Home advantage parameter'
+        required: false
+        default: '0.3'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  recalculate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy scipy aiohttp
+
+      - name: Run theta recalculation
+        env:
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+        run: |
+          python scripts/recalculate_thetas.py \
+            --seasons ${{ github.event.inputs.seasons || '3' }} \
+            --home-advantage ${{ github.event.inputs.home_advantage || '0.3' }}
+
+      - name: Show results
+        run: |
+          echo "## New Theta Values" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat data/MOTSON_GPCM_Theta_Alpha.csv >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet data/MOTSON_GPCM_Theta_Alpha.csv; then
+            echo "No changes to theta values"
+          else
+            git add data/MOTSON_GPCM_Theta_Alpha.csv
+            git commit -m "Recalculate team thetas from ${{ github.event.inputs.seasons || '3' }} seasons
+
+            Generated using GPCM model on historical match data.
+            Home advantage: ${{ github.event.inputs.home_advantage || '0.3' }}
+
+            Triggered by: @${{ github.actor }}"
+            git push
+            echo "Changes committed and pushed"
+          fi
+
+      - name: Note about backfill
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "After theta recalculation, you may want to:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Run the backfill script locally to regenerate historical predictions" >> $GITHUB_STEP_SUMMARY
+          echo "2. Or wait for the next scheduled update to apply new thetas" >> $GITHUB_STEP_SUMMARY
