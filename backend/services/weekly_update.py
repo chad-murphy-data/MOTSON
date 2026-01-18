@@ -129,6 +129,7 @@ class WeeklyUpdatePipeline:
             remaining_fixtures=remaining_fixtures,
             current_points=current_points,
             n_simulations=model_config.DEFAULT_SIMULATIONS,
+            week=current_week,  # Pass week for preseason uncertainty decay
         )
 
         # 8. Generate next week's predictions

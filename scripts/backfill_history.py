@@ -139,6 +139,7 @@ def simulate_week(
         remaining_fixtures=remaining_fixtures,
         current_points=standings_at_week,
         n_simulations=model_config.DEFAULT_SIMULATIONS,
+        week=week,  # Pass week for preseason uncertainty
     )
 
     # Compile predictions

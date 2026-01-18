@@ -40,6 +40,11 @@ class ModelConfig:
     # Home/away theta offset
     HOME_AWAY_OFFSET: float = 0.15     # Away theta = home theta - this
 
+    # Preseason uncertainty - we're less certain before matches are played
+    # This adds uncertainty that decays as the season progresses
+    PRESEASON_SIGMA_BOOST: float = 0.20   # Extra sigma added at week 0
+    SIGMA_DECAY_WEEKS: float = 10.0       # Half-life of preseason uncertainty decay
+
 
 @dataclass
 class APIConfig:

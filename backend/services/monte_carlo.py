@@ -39,6 +39,7 @@ class MonteCarloSimulator:
         current_points: Dict[str, int],
         n_simulations: int = 10000,
         seed: Optional[int] = None,
+        week: int = 38,  # Current week for preseason uncertainty
     ) -> Dict[str, Dict]:
         """
         Run Monte Carlo simulation of remaining season.
@@ -61,6 +62,16 @@ class MonteCarloSimulator:
 
         logger.info(f"Running {n_simulations} simulations for {n_fixtures} remaining fixtures")
 
+        # Calculate preseason uncertainty factor
+        # At week 0, we compress theta towards mean (regression to mean effect)
+        # This decays over the first ~10 weeks as we learn more about teams
+        # Compression of ~60% at week 0 gives bookmaker-like preseason odds (~55-65% for favorite)
+        preseason_factor = np.exp(-week / self.cfg.SIGMA_DECAY_WEEKS)
+        theta_compression = 1.0 - (preseason_factor * 0.60)  # Compress up to 60% at week 0
+
+        if week < 10:
+            logger.info(f"  Week {week}: theta_compression={theta_compression:.3f} (preseason uncertainty)")
+
         # Pre-compute match probabilities for efficiency
         # Shape: (n_fixtures, 3) for [away_win, draw, home_win]
         match_probs = np.zeros((n_fixtures, 3))
@@ -72,9 +83,13 @@ class MonteCarloSimulator:
             home_state = team_states[fixture.home_team]
             away_state = team_states[fixture.away_team]
 
+            # Apply preseason theta compression (regress towards 0)
+            home_theta = home_state.effective_theta_home * theta_compression
+            away_theta = away_state.effective_theta_away * theta_compression
+
             h_prob, d_prob, a_prob, _ = predict_match_probs(
-                home_state.effective_theta_home,
-                away_state.effective_theta_away,
+                home_theta,
+                away_theta,
                 home_state.sigma,
                 away_state.sigma,
             )
