@@ -476,6 +476,39 @@ async def get_historical_position_probs():
     }
 
 
+@app.get("/history/title-race")
+async def get_historical_title_race():
+    """Get historical title probability trajectories for all teams over the season."""
+    db = get_db()
+    predictions = db.get_all_season_predictions_history()
+
+    if not predictions:
+        raise HTTPException(status_code=404, detail="No historical predictions available - run update first")
+
+    # Group by team
+    teams_data = {}
+    for record in predictions:
+        team = record["team"]
+        if team not in teams_data:
+            teams_data[team] = []
+        teams_data[team].append({
+            "week": record["week"],
+            "title_prob": record["title_prob"],
+            "top4_prob": record["top4_prob"],
+            "relegation_prob": record["relegation_prob"],
+            "expected_position": record["expected_position"],
+        })
+
+    # Sort each team's data by week
+    for team in teams_data:
+        teams_data[team] = sorted(teams_data[team], key=lambda x: x["week"])
+
+    return {
+        "history": teams_data,
+        "weeks": sorted(set(r["week"] for r in predictions)),
+    }
+
+
 # Counterfactual simulation
 
 @app.post("/counterfactual")

@@ -21,6 +21,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from backend.services.monte_carlo import MonteCarloSimulator
+from backend.services.survival_calibration import calibrate_title_probabilities
 from backend.models.team_state import TeamState, SeasonPrediction, MatchResult, Fixture
 from backend.models.bayesian_engine import BayesianEngine, predict_match, initialize_team_states
 from backend.database.db import Database
@@ -140,6 +141,17 @@ def simulate_week(
         current_points=standings_at_week,
         n_simulations=model_config.DEFAULT_SIMULATIONS,
         week=week,  # Pass week for preseason uncertainty
+    )
+
+    # Apply survival calibration to title probabilities
+    # This blends MC output with historical lead survival rates
+    games_remaining = 38 - week
+    team_thetas = {name: state.effective_theta_home for name, state in team_states.items()}
+    season_outcomes = calibrate_title_probabilities(
+        mc_results=season_outcomes,
+        current_standings=standings_at_week,
+        games_remaining=games_remaining,
+        team_thetas=team_thetas,
     )
 
     # Compile predictions

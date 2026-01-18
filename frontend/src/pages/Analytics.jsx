@@ -10,12 +10,13 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts';
-import { TrendingUp, Activity, Grid3X3 } from 'lucide-react';
+import { TrendingUp, Activity, Grid3X3, Trophy } from 'lucide-react';
 
 import {
   getHistoricalPoints,
   getHistoricalStrength,
   getHistoricalPositions,
+  getHistoricalTitleRace,
 } from '../api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorMessage from '../components/ErrorMessage';
@@ -51,7 +52,7 @@ const getTeamColor = (team) => {
 };
 
 export default function Analytics() {
-  const [view, setView] = React.useState('points'); // 'points', 'strength', 'heatmap'
+  const [view, setView] = React.useState('title'); // 'title', 'points', 'strength', 'heatmap'
   const [selectedTeams, setSelectedTeams] = React.useState([]);
 
   const pointsQuery = useQuery({
@@ -69,21 +70,29 @@ export default function Analytics() {
     queryFn: getHistoricalPositions,
   });
 
-  const isLoading = view === 'points' ? pointsQuery.isLoading
+  const titleRaceQuery = useQuery({
+    queryKey: ['historicalTitleRace'],
+    queryFn: getHistoricalTitleRace,
+  });
+
+  const isLoading = view === 'title' ? titleRaceQuery.isLoading
+    : view === 'points' ? pointsQuery.isLoading
     : view === 'strength' ? strengthQuery.isLoading
     : positionsQuery.isLoading;
 
-  const error = view === 'points' ? pointsQuery.error
+  const error = view === 'title' ? titleRaceQuery.error
+    : view === 'points' ? pointsQuery.error
     : view === 'strength' ? strengthQuery.error
     : positionsQuery.error;
 
   // Get all available teams
   const allTeams = React.useMemo(() => {
-    const data = view === 'points' ? pointsQuery.data?.history
+    const data = view === 'title' ? titleRaceQuery.data?.history
+      : view === 'points' ? pointsQuery.data?.history
       : view === 'strength' ? strengthQuery.data?.history
       : null;
     return data ? Object.keys(data).sort() : [];
-  }, [view, pointsQuery.data, strengthQuery.data]);
+  }, [view, titleRaceQuery.data, pointsQuery.data, strengthQuery.data]);
 
   // Initialize with top 6 teams if none selected
   React.useEffect(() => {
@@ -117,6 +126,13 @@ export default function Analytics() {
 
       {/* View Toggle */}
       <div className="flex flex-wrap gap-2">
+        <ViewButton
+          active={view === 'title'}
+          onClick={() => setView('title')}
+          icon={Trophy}
+          label="Title Race"
+          color="gold"
+        />
         <ViewButton
           active={view === 'points'}
           onClick={() => setView('points')}
@@ -192,7 +208,12 @@ export default function Analytics() {
           </div>
 
           {/* Chart */}
-          {view === 'points' ? (
+          {view === 'title' ? (
+            <TitleRaceChart
+              data={titleRaceQuery.data}
+              selectedTeams={selectedTeams}
+            />
+          ) : view === 'points' ? (
             <PointsChart
               data={pointsQuery.data}
               selectedTeams={selectedTeams}
@@ -210,11 +231,14 @@ export default function Analytics() {
       <div className="card bg-slate-50">
         <div className="card-body">
           <h3 className="font-semibold text-slate-900 mb-2">
+            {view === 'title' && 'Title Probability Trajectories'}
             {view === 'points' && 'Predicted vs Actual Points'}
             {view === 'strength' && 'Team Strength (Theta)'}
             {view === 'heatmap' && 'Position Probability Heatmap'}
           </h3>
           <p className="text-sm text-slate-600">
+            {view === 'title' &&
+              'Shows how title-winning probability has evolved for each team throughout the season. Probabilities are calibrated using historical lead survival rates - teams with large leads may see their raw Monte Carlo probabilities adjusted downward to reflect that historically, big leads don\'t hold as often as pure probability suggests.'}
             {view === 'points' &&
               'Shows how each team\'s predicted end-of-season points total has evolved week by week, compared to their actual accumulated points. Large gaps indicate the model expects significant regression or improvement.'}
             {view === 'strength' &&
@@ -232,6 +256,7 @@ function ViewButton({ active, onClick, icon: Icon, label, color = 'primary' }) {
   const colorClasses = {
     primary: active ? 'bg-primary-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50',
     red: active ? 'bg-red-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50',
+    gold: active ? 'bg-amber-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50',
   };
 
   return (
@@ -422,6 +447,95 @@ function StrengthChart({ data, selectedTeams }) {
                 stroke={getTeamColor(team)}
                 strokeWidth={2}
                 dot={false}
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function TitleRaceChart({ data, selectedTeams }) {
+  if (!data?.history || !data?.weeks?.length) {
+    return (
+      <div className="card">
+        <div className="card-body text-center py-8">
+          <p className="text-slate-500">No historical data available yet</p>
+        </div>
+      </div>
+    );
+  }
+
+  const hasMultipleWeeks = data.weeks.length > 1;
+
+  // Transform data for recharts
+  const chartData = data.weeks.map(week => {
+    const point = { week };
+    selectedTeams.forEach(team => {
+      const teamData = data.history[team]?.find(d => d.week === week);
+      if (teamData) {
+        point[team] = teamData.title_prob * 100; // Convert to percentage
+      }
+    });
+    return point;
+  });
+
+  if (!hasMultipleWeeks) {
+    return (
+      <div className="card">
+        <div className="card-body text-center py-8">
+          <p className="text-slate-500 mb-2">
+            Only 1 week of data available (Week {data.weeks[0]})
+          </p>
+          <p className="text-xs text-slate-400">
+            Title race trajectories will appear as more matchweeks are tracked.
+            The scheduled update runs automatically after each matchday.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <h2 className="font-semibold text-slate-900">Title Probability Over Season</h2>
+      </div>
+      <div className="card-body">
+        <ResponsiveContainer width="100%" height={500}>
+          <LineChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+            <XAxis
+              dataKey="week"
+              tick={{ fontSize: 12, fill: '#64748b' }}
+              label={{ value: 'Matchweek', position: 'bottom', offset: 0 }}
+            />
+            <YAxis
+              tick={{ fontSize: 12, fill: '#64748b' }}
+              label={{ value: 'Title Probability (%)', angle: -90, position: 'insideLeft' }}
+              domain={[0, 100]}
+              tickFormatter={(value) => `${value}%`}
+            />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: 'white',
+                border: '1px solid #e2e8f0',
+                borderRadius: '8px',
+              }}
+              formatter={(value) => [`${value.toFixed(1)}%`, 'Title Prob']}
+            />
+            <Legend />
+            {selectedTeams.map(team => (
+              <Line
+                key={team}
+                type="monotone"
+                dataKey={team}
+                name={team}
+                stroke={getTeamColor(team)}
+                strokeWidth={2}
+                dot={{ r: 3 }}
+                activeDot={{ r: 5 }}
               />
             ))}
           </LineChart>

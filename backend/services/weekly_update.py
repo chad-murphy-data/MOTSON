@@ -29,6 +29,7 @@ from ..models.bayesian_engine import (
 )
 from .data_fetcher import FootballDataAPI
 from .monte_carlo import MonteCarloSimulator
+from .survival_calibration import calibrate_title_probabilities
 from ..config import model_config, app_config
 
 logger = logging.getLogger(__name__)
@@ -130,6 +131,17 @@ class WeeklyUpdatePipeline:
             current_points=current_points,
             n_simulations=model_config.DEFAULT_SIMULATIONS,
             week=current_week,  # Pass week for preseason uncertainty decay
+        )
+
+        # 7.5 Apply survival calibration to title probabilities
+        # This blends MC output with historical lead survival rates
+        games_remaining = 38 - current_week
+        team_thetas = {name: state.effective_theta_home for name, state in team_states.items()}
+        season_outcomes = calibrate_title_probabilities(
+            mc_results=season_outcomes,
+            current_standings=current_points,
+            games_remaining=games_remaining,
+            team_thetas=team_thetas,
         )
 
         # 8. Generate next week's predictions

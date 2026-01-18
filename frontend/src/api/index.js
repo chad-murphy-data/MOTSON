@@ -50,6 +50,7 @@ export const getRelegationBattle = () => fetchApi('/probabilities/relegation');
 export const getHistoricalPoints = () => fetchApi('/history/points');
 export const getHistoricalStrength = () => fetchApi('/history/strength');
 export const getHistoricalPositions = () => fetchApi('/history/positions');
+export const getHistoricalTitleRace = () => fetchApi('/history/title-race');
 
 // Results
 export const getResults = (matchweek) =>
