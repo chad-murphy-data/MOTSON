@@ -76,8 +76,8 @@ class AppConfig:
 
 
 # Analyst adjustments (Chad's expert overrides)
+# Note: Arsenal boost removed - now reflected in recalculated GPCM thetas
 ANALYST_ADJUSTMENTS: Dict[str, float] = {
-    "Arsenal": 0.35,        # Big 3 tier - squad quality exceeds historical gravity
     "Newcastle Utd": 0.10,  # Upward trajectory, Saudi investment
     "Manchester Utd": -0.10,  # Chaos factor, decline
     "Tottenham": -0.05,     # Spursy coefficient

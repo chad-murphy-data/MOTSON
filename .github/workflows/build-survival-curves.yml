@@ -1,0 +1,87 @@
+name: Build Lead Survival Curves
+
+# Manual trigger - run once to build historical lookup tables
+# Or scheduled monthly to refresh with new data
+on:
+  workflow_dispatch:
+    inputs:
+      seasons:
+        description: 'Number of seasons to analyze (5-15)'
+        required: false
+        default: '10'
+        type: string
+  schedule:
+    # Run on 1st of each month at 3 AM UTC (refresh historical data)
+    - cron: '0 3 1 * *'
+
+permissions:
+  contents: write
+
+jobs:
+  build-survival:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy aiohttp
+
+      - name: Build survival curves
+        env:
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+        run: |
+          python scripts/build_survival_curves.py \
+            --seasons ${{ github.event.inputs.seasons || '10' }}
+
+      - name: Show key results
+        run: |
+          echo "## Lead Survival Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Raw Data Sample" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          python -c "import json; d=json.load(open('data/lead_survival.json')); print(json.dumps({k:v for k,v in list(d['raw_survival_table']['by_lead'].items())[:10]}, indent=2))"  >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Key Scenarios" >> $GITHUB_STEP_SUMMARY
+          python -c "
+          import json
+          d = json.load(open('data/lead_survival.json'))
+          lookup = d['smoothed_lookup']
+          scenarios = [('7 pts, 16 games', '7_16'), ('7 pts, 10 games', '7_10'), ('4 pts, 16 games', '4_16'), ('10 pts, 10 games', '10_10')]
+          for name, key in scenarios:
+              rate = lookup.get(key, 'N/A')
+              if isinstance(rate, float):
+                  print(f'- {name}: {rate:.1%}')
+              else:
+                  print(f'- {name}: {rate}')
+          " >> $GITHUB_STEP_SUMMARY
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet data/lead_survival.json data/lead_survival.csv 2>/dev/null; then
+            echo "No changes to survival data"
+          else
+            git add data/lead_survival.json data/lead_survival.csv
+            git commit -m "Update lead survival curves from ${{ github.event.inputs.seasons || '10' }} seasons
+
+            Historical analysis of title race lead survival rates.
+            Used for calibrating Monte Carlo title probabilities.
+
+            Triggered by: @${{ github.actor }}"
+            git push
+            echo "Changes committed and pushed"
+          fi

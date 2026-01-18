@@ -238,16 +238,16 @@ async def fetch_season_matches(api: FootballDataAPI, season: int) -> List[MatchD
         return []
 
 
-def apply_season_weights(matches: List[MatchData], current_season: int, decay: float = 0.85) -> List[MatchData]:
+def apply_season_weights(matches: List[MatchData], current_season: int, decay: float = 1.0) -> List[MatchData]:
     """
     Apply weights to matches based on recency.
 
-    More recent seasons get higher weight, but we use a gentler decay (0.85)
-    to preserve "institutional gravity" - the idea that clubs like City/Liverpool
+    With decay=1.0, all seasons are weighted equally. This maximizes
+    "institutional gravity" - the idea that clubs like City/Liverpool
     have structural advantages that persist across seasons.
 
-    With decay=0.85:
-      Current: 100%, 1yr: 85%, 2yr: 72%, 3yr: 61%, 4yr: 52%
+    With decay=1.0:
+      All seasons weighted equally at 100%
     """
     for match in matches:
         years_ago = current_season - match.season
