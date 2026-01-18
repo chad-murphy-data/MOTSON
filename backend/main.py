@@ -471,7 +471,33 @@ async def get_model_config():
             "DEFAULT_SIMULATIONS": model_config.DEFAULT_SIMULATIONS,
         },
         "analyst_adjustments": ANALYST_ADJUSTMENTS,
+        "current_season": app_config.CURRENT_SEASON,
     }
+
+
+@app.get("/admin/debug")
+async def debug_api_data():
+    """Debug endpoint to see what the football-data.org API is returning."""
+    api = FootballDataAPI()
+
+    try:
+        all_fixtures = await api.get_all_fixtures()
+        finished = [f for f in all_fixtures if f.status == "FINISHED"]
+        scheduled = [f for f in all_fixtures if f.status == "SCHEDULED"]
+
+        return {
+            "configured_season": app_config.CURRENT_SEASON,
+            "total_fixtures": len(all_fixtures),
+            "finished_count": len(finished),
+            "scheduled_count": len(scheduled),
+            "fixture_statuses": list(set(f.status for f in all_fixtures)),
+            "matchweeks_with_finished": sorted(set(f.matchweek for f in finished)) if finished else [],
+            "matchweeks_with_scheduled": sorted(set(f.matchweek for f in scheduled)) if scheduled else [],
+            "sample_finished": [f.to_dict() for f in finished[:3]] if finished else [],
+            "sample_scheduled": [f.to_dict() for f in scheduled[:3]] if scheduled else [],
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # Results endpoint (for displaying match history)
