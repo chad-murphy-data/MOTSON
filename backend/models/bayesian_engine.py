@@ -222,9 +222,24 @@ class BayesianEngine:
         # 4. Check if update is warranted
         if abs(z_score) < cfg.UPDATE_THRESHOLD:
             # Within expected variance - model is calibrated
-            # Tiny sigma shrink (we confirmed our belief)
+            # But apply a small "drift" update proportional to z-score
+            # This creates realistic week-to-week wobble
+            old_theta = team.theta_home
             old_sigma = team.sigma
-            team.sigma *= 0.98
+
+            # Small drift: 20% of what a full update would be, scaled by z-score
+            drift_factor = 0.20
+            drift = (
+                z_score  # Direction and magnitude from z
+                * drift_factor
+                * cfg.LEARNING_RATE
+                * (team.sigma / cfg.BASELINE_SIGMA)
+                * (1.0 / team.stickiness)
+            )
+
+            team.theta_home += drift
+            team.theta_away += drift
+            team.sigma *= 0.98  # Tiny sigma shrink
 
             return team, UpdateExplanation(
                 team=team.team,
@@ -233,7 +248,8 @@ class BayesianEngine:
                 expected_points=expected_pts,
                 z_score=z_score,
                 update_triggered=False,
-                reason=f"Performance within expectations (|z|={abs(z_score):.2f} < {cfg.UPDATE_THRESHOLD})",
+                reason=f"Small drift (|z|={abs(z_score):.2f} < {cfg.UPDATE_THRESHOLD})",
+                theta_change=drift,
                 sigma_change=team.sigma - old_sigma,
                 new_theta=team.theta_home,
                 new_sigma=team.sigma,
@@ -386,6 +402,39 @@ class BayesianEngine:
         return results
 
 
+def normalize_gpcm_thetas(theta_df, target_std: float = 0.5):
+    """
+    Normalize GPCM thetas to have mean=0 and target standard deviation.
+
+    This ensures comparability across different years' GPCM outputs,
+    which may have different scales depending on the teams in the dataset.
+
+    Args:
+        theta_df: DataFrame with Team and Theta columns
+        target_std: Target standard deviation (default 0.5)
+
+    Returns:
+        Dict mapping team -> normalized theta
+    """
+    if theta_df is None or len(theta_df) == 0:
+        return {}
+
+    thetas = theta_df["Theta"].values
+    mean = thetas.mean()
+    std = thetas.std()
+
+    if std < 0.01:  # Avoid division by very small std
+        std = 1.0
+
+    # Z-score normalize then scale to target std
+    normalized = {}
+    for _, row in theta_df.iterrows():
+        z = (row["Theta"] - mean) / std
+        normalized[row["Team"]] = z * target_std
+
+    return normalized
+
+
 def initialize_team_states(
     team_params_df,  # DataFrame with team parameters
     theta_df=None,   # Optional: initial theta values
@@ -395,7 +444,7 @@ def initialize_team_states(
 
     Args:
         team_params_df: DataFrame with columns:
-            Team, stickiness, initial_sigma, gravity_mean
+            Team, stickiness, initial_sigma, gravity_mean, n_seasons
         theta_df: Optional DataFrame with initial theta values
 
     Returns:
@@ -403,16 +452,35 @@ def initialize_team_states(
     """
     states = {}
 
+    # Normalize GPCM thetas for consistent scale across years
+    normalized_thetas = normalize_gpcm_thetas(
+        theta_df,
+        target_std=model_config.THETA_TARGET_STD
+    )
+
     for _, row in team_params_df.iterrows():
         team = row["Team"]
+        n_seasons = row.get("n_seasons", 5)  # Default to 5 if not specified
 
-        # Get initial theta (default to position-based estimate)
-        if theta_df is not None and team in theta_df["Team"].values:
-            theta_row = theta_df[theta_df["Team"] == team].iloc[0]
-            theta_home = theta_row["Theta"]
+        # Get normalized GPCM theta if available
+        gpcm_theta = normalized_thetas.get(team)
+
+        # Gravity-based theta (from historical position)
+        gravity_theta = position_to_theta(row["gravity_mean"])
+
+        # For promoted/recently-returned teams (n_seasons <= 2),
+        # use the promoted team default theta instead of stale GPCM data
+        # Their historical GPCM may be from years ago before relegation
+        if n_seasons <= 2:
+            # Promoted teams start at the "promoted team average" (~16th place)
+            # This reflects where newly promoted teams typically finish
+            theta_home = model_config.PROMOTED_TEAM_THETA
+        elif gpcm_theta is not None:
+            # Established teams: use GPCM directly
+            theta_home = gpcm_theta
         else:
-            # Estimate from gravity (historical position)
-            theta_home = position_to_theta(row["gravity_mean"])
+            # No GPCM data: use gravity
+            theta_home = gravity_theta
 
         # Apply analyst adjustment
         analyst_adj = ANALYST_ADJUSTMENTS.get(team, 0.0)

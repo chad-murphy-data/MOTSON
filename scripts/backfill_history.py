@@ -231,15 +231,14 @@ def run_backfill(start_week: int = 0, end_week: int = None):
     teams = list(set([f.home_team for f in all_fixtures] + [f.away_team for f in all_fixtures]))
     logger.info(f"Teams: {len(teams)}")
 
-    # Load fresh initial team states for each backfill
-    # We'll re-initialize for each run to get clean starting point
+    # Load initial team states ONCE at the start
+    # Theta updates will accumulate across weeks (this is the key fix!)
+    team_states = load_initial_team_states(str(DATA_DIR))
+    logger.info(f"Loaded initial states for {len(team_states)} teams")
 
     for week in range(start_week, end_week + 1):
         logger.info(f"\n{'='*50}")
         logger.info(f"Simulating Week {week}...")
-
-        # Reload initial team states (fresh start)
-        team_states = load_initial_team_states(str(DATA_DIR))
 
         # Get results through this week
         results_through_week = [r for r in all_results if r.matchweek <= week]
@@ -260,6 +259,13 @@ def run_backfill(start_week: int = 0, end_week: int = None):
             simulator=simulator,
             engine=engine,
         )
+
+        # Log theta changes for a few interesting teams
+        interesting_teams = ["Liverpool", "Arsenal", "Manchester City", "Sunderland", "Wolves"]
+        for team_name in interesting_teams:
+            if team_name in team_states:
+                state = team_states[team_name]
+                logger.info(f"  {team_name}: theta={state.theta_home:.4f}, sigma={state.sigma:.4f}, z={state.cumulative_z_score:.2f}")
 
         # Save to database
         logger.info(f"  Saving week {week} to database...")

@@ -45,6 +45,16 @@ class ModelConfig:
     PRESEASON_SIGMA_BOOST: float = 0.20   # Extra sigma added at week 0
     SIGMA_DECAY_WEEKS: float = 10.0       # Half-life of preseason uncertainty decay
 
+    # Promoted team default theta
+    # Newly promoted teams historically finish around positions 15-17
+    # This is the average theta for those positions: -0.5789
+    PROMOTED_TEAM_THETA: float = -0.5789  # ~16th place expectation
+
+    # GPCM theta normalization
+    # Target std ensures comparable scales across different years' GPCM outputs
+    # 0.5 gives a nice spread: top teams ~+1.0, bottom teams ~-1.0
+    THETA_TARGET_STD: float = 0.50
+
 
 @dataclass
 class APIConfig:

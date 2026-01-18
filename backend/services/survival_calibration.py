@@ -259,6 +259,13 @@ class SurvivalCalibrator:
 
             calibrated_results[team] = team_data_copy
 
+        # Normalize title probabilities to sum to 1.0
+        # When calibration reduces the leader's probability, redistribute to others
+        total_title_prob = sum(r["title_prob"] for r in calibrated_results.values())
+        if total_title_prob > 0 and abs(total_title_prob - 1.0) > 0.001:
+            for team in calibrated_results:
+                calibrated_results[team]["title_prob"] /= total_title_prob
+
         # Log calibration summary for leader
         if leader in calibrated_results:
             mc_prob = mc_results[leader]["title_prob"]
