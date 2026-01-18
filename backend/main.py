@@ -356,6 +356,93 @@ async def get_relegation_battle():
     return {"relegation_battle": relegation_probs[:10]}
 
 
+# Historical data endpoints
+
+@app.get("/history/points")
+async def get_historical_points():
+    """Get historical predicted vs actual points for all teams over the season."""
+    db = get_db()
+    history = db.get_all_teams_history()
+
+    if not history:
+        raise HTTPException(status_code=404, detail="No historical data available - run update first")
+
+    # Group by team
+    teams_data = {}
+    for record in history:
+        team = record["team"]
+        if team not in teams_data:
+            teams_data[team] = []
+        teams_data[team].append({
+            "week": record["week"],
+            "expected_points": record["expected_points"],
+            "actual_points": record["actual_points"],
+        })
+
+    return {
+        "history": teams_data,
+        "weeks": sorted(set(r["week"] for r in history)),
+    }
+
+
+@app.get("/history/strength")
+async def get_historical_strength():
+    """Get historical team strength (theta) trajectories for all teams."""
+    db = get_db()
+    history = db.get_all_teams_history()
+
+    if not history:
+        raise HTTPException(status_code=404, detail="No historical data available - run update first")
+
+    # Group by team
+    teams_data = {}
+    for record in history:
+        team = record["team"]
+        if team not in teams_data:
+            teams_data[team] = []
+        teams_data[team].append({
+            "week": record["week"],
+            "theta_home": record["theta_home"],
+            "theta_away": record["theta_away"],
+            "sigma": record["sigma"],
+            "theta_avg": (record["theta_home"] + record["theta_away"]) / 2,
+        })
+
+    return {
+        "history": teams_data,
+        "weeks": sorted(set(r["week"] for r in history)),
+    }
+
+
+@app.get("/history/positions")
+async def get_historical_position_probs():
+    """Get historical position probability distributions for heat map visualization."""
+    db = get_db()
+    predictions = db.get_all_season_predictions_history()
+
+    if not predictions:
+        raise HTTPException(status_code=404, detail="No historical predictions available - run update first")
+
+    # Get the latest week's predictions for the heat map
+    latest_week = max(p["week"] for p in predictions)
+    latest_predictions = [p for p in predictions if p["week"] == latest_week]
+
+    # Sort by expected position
+    sorted_preds = sorted(latest_predictions, key=lambda x: x["expected_position"])
+
+    return {
+        "week": latest_week,
+        "predictions": [
+            {
+                "team": p["team"],
+                "position_probs": p["position_probs"],
+                "expected_position": p["expected_position"],
+            }
+            for p in sorted_preds
+        ],
+    }
+
+
 # Counterfactual simulation
 
 @app.post("/counterfactual")

@@ -9,6 +9,7 @@ import {
   Sparkles,
   Settings,
   RefreshCw,
+  BarChart3,
 } from 'lucide-react';
 
 import Dashboard from './pages/Dashboard';
@@ -17,6 +18,7 @@ import TeamDetail from './pages/TeamDetail';
 import Predictions from './pages/Predictions';
 import SeasonOutcomes from './pages/SeasonOutcomes';
 import Counterfactual from './pages/Counterfactual';
+import Analytics from './pages/Analytics';
 
 function App() {
   return (
@@ -43,6 +45,7 @@ function App() {
                 <NavItem to="/standings" icon={Trophy} label="Standings" />
                 <NavItem to="/predictions" icon={Calendar} label="Predictions" />
                 <NavItem to="/outcomes" icon={TrendingUp} label="Outcomes" />
+                <NavItem to="/analytics" icon={BarChart3} label="Analytics" />
                 <NavItem to="/counterfactual" icon={Sparkles} label="What If?" />
               </nav>
 
@@ -61,7 +64,7 @@ function App() {
             <NavItemMobile to="/standings" icon={Trophy} label="Table" />
             <NavItemMobile to="/predictions" icon={Calendar} label="Matches" />
             <NavItemMobile to="/outcomes" icon={TrendingUp} label="Season" />
-            <NavItemMobile to="/counterfactual" icon={Sparkles} label="What If" />
+            <NavItemMobile to="/analytics" icon={BarChart3} label="Analytics" />
           </nav>
         </header>
 
@@ -73,6 +76,7 @@ function App() {
             <Route path="/team/:teamName" element={<TeamDetail />} />
             <Route path="/predictions" element={<Predictions />} />
             <Route path="/outcomes" element={<SeasonOutcomes />} />
+            <Route path="/analytics" element={<Analytics />} />
             <Route path="/counterfactual" element={<Counterfactual />} />
           </Routes>
         </main>

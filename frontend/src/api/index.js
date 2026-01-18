@@ -46,6 +46,11 @@ export const getSeasonProbabilities = () => fetchApi('/probabilities/season');
 export const getTitleRace = () => fetchApi('/probabilities/title');
 export const getRelegationBattle = () => fetchApi('/probabilities/relegation');
 
+// Historical data
+export const getHistoricalPoints = () => fetchApi('/history/points');
+export const getHistoricalStrength = () => fetchApi('/history/strength');
+export const getHistoricalPositions = () => fetchApi('/history/positions');
+
 // Results
 export const getResults = (matchweek) =>
   fetchApi(`/results${matchweek ? `?matchweek=${matchweek}` : ''}`);

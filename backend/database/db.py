@@ -286,6 +286,51 @@ class Database:
 
         return [dict(row) for row in rows]
 
+    def get_all_teams_history(self) -> List[Dict]:
+        """Get historical state snapshots for all teams."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT * FROM team_state_history
+            ORDER BY week, team
+        """)
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [dict(row) for row in rows]
+
+    def get_all_season_predictions_history(self) -> List[Dict]:
+        """Get all historical season predictions for all teams and weeks."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT * FROM season_predictions
+            ORDER BY week, team
+        """)
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [
+            {
+                "team": row["team"],
+                "week": row["week"],
+                "position_probs": json.loads(row["position_probs"]),
+                "title_prob": row["title_prob"],
+                "top4_prob": row["top4_prob"],
+                "top6_prob": row["top6_prob"],
+                "relegation_prob": row["relegation_prob"],
+                "expected_position": row["expected_position"],
+                "position_std": row["position_std"],
+                "expected_points": row["expected_points"],
+                "points_std": row["points_std"],
+            }
+            for row in rows
+        ]
+
     # Match Results
 
     def save_match_result(self, result: MatchResult):
