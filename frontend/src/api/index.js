@@ -2,7 +2,9 @@
  * MOTSON API Client
  */
 
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
+// In production, VITE_API_URL points to the backend service
+// In development, we use the Vite proxy to /api
+const API_BASE = import.meta.env.VITE_API_URL || '';
 
 async function fetchApi(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;

@@ -498,15 +498,22 @@ async def get_results(matchweek: Optional[int] = None):
 
 # Serve React frontend (in production)
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "build")
-if os.path.exists(frontend_path):
-    app.mount("/static", StaticFiles(directory=os.path.join(frontend_path, "static")), name="static")
+frontend_static_path = os.path.join(frontend_path, "static")
+
+if os.path.exists(frontend_path) and os.path.exists(frontend_static_path):
+    app.mount("/static", StaticFiles(directory=frontend_static_path), name="static")
 
     @app.get("/{full_path:path}")
     async def serve_react(full_path: str):
         """Serve React frontend for all non-API routes."""
         if full_path.startswith("api/") or full_path in ["health", "docs", "openapi.json"]:
             raise HTTPException(status_code=404)
-        return FileResponse(os.path.join(frontend_path, "index.html"))
+        index_path = os.path.join(frontend_path, "index.html")
+        if os.path.exists(index_path):
+            return FileResponse(index_path)
+        raise HTTPException(status_code=404, detail="Frontend not built")
+else:
+    logger.info("Frontend build not found - API-only mode")
 
 
 if __name__ == "__main__":
