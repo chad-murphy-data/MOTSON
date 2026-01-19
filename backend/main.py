@@ -363,9 +363,9 @@ async def get_week_predictions(week: int):
                 gap = m_home - m_away
                 h_prob, d_prob, a_prob = gap_to_probabilities(gap)
 
-                # Calculate confidence from uncertainty
-                avg_sigma = (home_state.sigma + away_state.sigma) / 2
-                confidence = max(0, 1 - avg_sigma)
+                # Calculate confidence from uncertainty (using theta_se, the standard error)
+                avg_se = (home_state.theta_se + away_state.theta_se) / 2
+                confidence = max(0, 1 - avg_se)
 
                 predictions.append({
                     "match_id": fixture.get("match_id", f"{week}_{home_team}_{away_team}"),
