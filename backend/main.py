@@ -305,48 +305,59 @@ async def get_team_history(team_name: str):
 
 @app.get("/predictions/week/{week}")
 async def get_week_predictions(week: int):
-    """Get match predictions for a specific week - from database first, API fallback."""
+    """Get match predictions for a specific week using IRT model."""
     db = get_db()
 
-    # Try database first
-    cached_predictions = db.get_match_predictions(week)
-    if cached_predictions:
-        return {
-            "week": week,
-            "predictions": cached_predictions,
-            "count": len(cached_predictions),
-            "source": "cached",
-        }
+    # Get fixtures from the database
+    all_fixtures = db.get_fixtures()
+    week_fixtures = [f for f in all_fixtures if f["matchweek"] == week]
 
-    # Fallback to API
-    api = FootballDataAPI()
-    try:
-        all_fixtures = await api.get_all_fixtures()
-        week_fixtures = [f for f in all_fixtures if f.matchweek == week]
+    if not week_fixtures:
+        raise HTTPException(status_code=404, detail=f"No fixtures found for week {week}")
 
-        if not week_fixtures:
-            raise HTTPException(status_code=404, detail=f"No fixtures found for week {week}")
+    # Get IRT states for predictions
+    irt_states = db.get_all_irt_team_states()
+    if not irt_states:
+        raise HTTPException(status_code=500, detail="No IRT states available")
 
-        predictions = []
-        for fixture in week_fixtures:
-            if fixture.home_team in team_states and fixture.away_team in team_states:
-                pred = predict_match(fixture, team_states)
-                predictions.append(pred.to_dict())
+    # Generate IRT predictions for all fixtures
+    predictions = []
+    for fixture in week_fixtures:
+        home_team = fixture["home_team"]
+        away_team = fixture["away_team"]
 
-        # Cache for next time
-        db.save_match_predictions(predictions)
+        home_state = irt_states.get(home_team)
+        away_state = irt_states.get(away_team)
 
-        return {
-            "week": week,
-            "predictions": predictions,
-            "count": len(predictions),
-            "source": "football-data.org",
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to generate predictions: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        if home_state and away_state:
+            # Calculate IRT prediction
+            m_home = home_state.theta - away_state.b_away
+            m_away = away_state.theta - home_state.b_home
+            gap = m_home - m_away
+            h_prob, d_prob, a_prob = gap_to_probabilities(gap)
+
+            # Calculate confidence from uncertainty
+            avg_sigma = (home_state.sigma + away_state.sigma) / 2
+            confidence = max(0, 1 - avg_sigma)
+
+            predictions.append({
+                "match_id": fixture.get("match_id", f"{week}_{home_team}_{away_team}"),
+                "matchweek": week,
+                "home_team": home_team,
+                "away_team": away_team,
+                "home_win_prob": h_prob,
+                "draw_prob": d_prob,
+                "away_win_prob": a_prob,
+                "confidence": confidence,
+                "delta": gap,
+            })
+
+    return {
+        "week": week,
+        "predictions": predictions,
+        "count": len(predictions),
+        "source": "irt",
+    }
 
 
 @app.get("/predictions/next")
