@@ -37,6 +37,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Fetch latest results from API
+        env:
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+        run: |
+          echo "Fetching latest results from football-data.org..."
+          python scripts/fetch_results.py
+
       - name: Check for new results
         id: check_results
         run: |
