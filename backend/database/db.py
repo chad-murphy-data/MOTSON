@@ -212,10 +212,34 @@ class Database:
                 gravity_weight REAL,
                 expected_points REAL,
                 actual_points INTEGER,
+                -- Simulation results
+                predicted_final_points REAL,
+                predicted_points_std REAL,
+                predicted_position REAL,
+                position_5th REAL,
+                position_95th REAL,
+                p_title REAL,
+                p_top4 REAL,
+                p_top6 REAL,
+                p_relegation REAL,
                 timestamp TEXT,
                 UNIQUE(team, week)
             )
         """)
+
+        # Add new columns if they don't exist (for existing databases)
+        try:
+            cursor.execute("ALTER TABLE irt_team_state_history ADD COLUMN predicted_final_points REAL")
+            cursor.execute("ALTER TABLE irt_team_state_history ADD COLUMN predicted_points_std REAL")
+            cursor.execute("ALTER TABLE irt_team_state_history ADD COLUMN predicted_position REAL")
+            cursor.execute("ALTER TABLE irt_team_state_history ADD COLUMN position_5th REAL")
+            cursor.execute("ALTER TABLE irt_team_state_history ADD COLUMN position_95th REAL")
+            cursor.execute("ALTER TABLE irt_team_state_history ADD COLUMN p_title REAL")
+            cursor.execute("ALTER TABLE irt_team_state_history ADD COLUMN p_top4 REAL")
+            cursor.execute("ALTER TABLE irt_team_state_history ADD COLUMN p_top6 REAL")
+            cursor.execute("ALTER TABLE irt_team_state_history ADD COLUMN p_relegation REAL")
+        except sqlite3.OperationalError:
+            pass  # Columns already exist
 
         conn.commit()
         conn.close()
@@ -739,16 +763,36 @@ class Database:
 
         return {team: self.get_irt_team_state(team) for team in teams}
 
-    def save_irt_team_state_history(self, state: IRTTeamState, week: int):
-        """Save IRT team state snapshot for history tracking."""
+    def save_irt_team_state_history(
+        self,
+        state: IRTTeamState,
+        week: int,
+        simulation_result: Optional[Dict] = None
+    ):
+        """Save IRT team state snapshot for history tracking.
+
+        Args:
+            state: The IRT team state
+            week: Week number
+            simulation_result: Optional dict with simulation results:
+                - predicted_final_points, predicted_points_std
+                - predicted_position, position_5th, position_95th
+                - p_title, p_top4, p_top6, p_relegation
+        """
         conn = self._get_connection()
         cursor = conn.cursor()
+
+        # Extract simulation results if provided
+        sim = simulation_result or {}
 
         cursor.execute("""
             INSERT OR REPLACE INTO irt_team_state_history
             (team, week, theta, theta_se, b_home, b_away, theta_season, theta_season_se,
-             gravity_weight, expected_points, actual_points, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             gravity_weight, expected_points, actual_points,
+             predicted_final_points, predicted_points_std,
+             predicted_position, position_5th, position_95th,
+             p_title, p_top4, p_top6, p_relegation, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             state.team,
             week,
@@ -761,6 +805,15 @@ class Database:
             state.gravity_weight,
             state.expected_points_season,
             state.actual_points_season,
+            sim.get("predicted_final_points"),
+            sim.get("predicted_points_std"),
+            sim.get("predicted_position"),
+            sim.get("position_5th"),
+            sim.get("position_95th"),
+            sim.get("p_title"),
+            sim.get("p_top4"),
+            sim.get("p_top6"),
+            sim.get("p_relegation"),
             datetime.utcnow().isoformat(),
         ))
 
