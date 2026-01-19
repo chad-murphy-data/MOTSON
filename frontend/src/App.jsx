@@ -47,6 +47,7 @@ function App() {
                 <NavItem to="/standings" icon={Trophy} label="Standings" />
                 <NavItem to="/predictions" icon={Calendar} label="Predictions" />
                 <NavItem to="/outcomes" icon={TrendingUp} label="Outcomes" />
+                <NavItem to="/analytics" icon={BarChart3} label="Analytics" />
                 <NavItem to="/fun-stats" icon={Skull} label="Fun Stats" />
                 <NavItem to="/counterfactual" icon={Sparkles} label="What If?" />
               </nav>
