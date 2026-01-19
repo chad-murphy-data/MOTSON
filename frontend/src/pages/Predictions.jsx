@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Calendar, ChevronLeft, ChevronRight, Clock } from 'lucide-react';
 
-import { getWeekPredictions, getResults } from '../api';
+import { getWeekPredictions, getNextWeekPredictions, getResults } from '../api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorMessage from '../components/ErrorMessage';
 import ProbabilityBar from '../components/ProbabilityBar';
@@ -14,11 +14,7 @@ export default function Predictions() {
   // Get current week from first query
   const nextWeekQuery = useQuery({
     queryKey: ['predictions', 'next'],
-    queryFn: async () => {
-      const response = await fetch('/api/predictions/next');
-      if (!response.ok) throw new Error('Failed to fetch');
-      return response.json();
-    },
+    queryFn: getNextWeekPredictions,
   });
 
   // Set initial week to current matchweek once we know it
