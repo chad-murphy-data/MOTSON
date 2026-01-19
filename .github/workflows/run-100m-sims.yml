@@ -1,13 +1,10 @@
 name: Run 100M Simulations
 
 on:
-  # EPL typically plays:
-  # - Saturday/Sunday matches -> runs Tuesday 6am UTC (catches Monday night too)
-  # - Midweek Tue/Wed evenings -> runs Wed/Thu 6am UTC
+  # Run every night at 6am UTC (after most matches finish)
+  # The workflow is smart - it checks if new results exist and skips if nothing changed
   schedule:
-    - cron: '0 6 * * 2'   # Tuesday 6am UTC (after Sat/Sun/Mon matches)
-    - cron: '0 6 * * 3'   # Wednesday 6am UTC (after Tuesday midweek)
-    - cron: '0 6 * * 4'   # Thursday 6am UTC (after Wednesday midweek)
+    - cron: '0 6 * * *'   # Daily at 6am UTC
 
   # Manual trigger
   workflow_dispatch:
