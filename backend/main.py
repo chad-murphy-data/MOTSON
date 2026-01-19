@@ -312,6 +312,18 @@ async def get_week_predictions(week: int):
     all_fixtures = db.get_fixtures()
     week_fixtures = [f for f in all_fixtures if f["matchweek"] == week]
 
+    # If no fixtures in DB, try the API
+    if not week_fixtures:
+        api = FootballDataAPI()
+        try:
+            api_fixtures = await api.get_all_fixtures()
+            week_fixtures = [
+                {"home_team": f.home_team, "away_team": f.away_team, "matchweek": f.matchweek, "match_id": f.match_id}
+                for f in api_fixtures if f.matchweek == week
+            ]
+        except Exception as e:
+            logger.error(f"Failed to fetch fixtures from API: {e}")
+
     if not week_fixtures:
         raise HTTPException(status_code=404, detail=f"No fixtures found for week {week}")
 
@@ -351,6 +363,8 @@ async def get_week_predictions(week: int):
                 "confidence": confidence,
                 "delta": gap,
             })
+        else:
+            logger.warning(f"Missing IRT state for {home_team} or {away_team}")
 
     return {
         "week": week,
