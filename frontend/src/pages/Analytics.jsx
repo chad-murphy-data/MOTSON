@@ -15,8 +15,8 @@ import { TrendingUp, Activity, Grid3X3, Trophy } from 'lucide-react';
 import {
   getHistoricalPoints,
   getHistoricalStrength,
-  getHistoricalPositions,
   getHistoricalTitleRace,
+  getIRTDistributions,
 } from '../api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorMessage from '../components/ErrorMessage';
@@ -66,8 +66,8 @@ export default function Analytics() {
   });
 
   const positionsQuery = useQuery({
-    queryKey: ['historicalPositions'],
-    queryFn: getHistoricalPositions,
+    queryKey: ['irtDistributions'],
+    queryFn: () => getIRTDistributions(100000),
   });
 
   const titleRaceQuery = useQuery({
@@ -546,7 +546,7 @@ function TitleRaceChart({ data, selectedTeams }) {
 }
 
 function PositionHeatmap({ data }) {
-  if (!data?.predictions?.length) {
+  if (!data?.teams?.length) {
     return (
       <div className="card">
         <div className="card-body text-center py-8">
@@ -556,12 +556,21 @@ function PositionHeatmap({ data }) {
     );
   }
 
-  const predictions = data.predictions;
+  const teams = data.teams;
   const positions = Array.from({ length: 20 }, (_, i) => i + 1);
 
-  // Find max probability for color scaling
+  // Convert position_distribution array to a map for easier lookup
+  // and find max probability for color scaling
+  const teamsWithProbMap = teams.map(team => {
+    const probMap = {};
+    team.position_distribution.forEach(({ position, probability }) => {
+      probMap[position] = probability;  // probability is already in % (e.g., 91 for 91%)
+    });
+    return { ...team, probMap };
+  });
+
   const maxProb = Math.max(
-    ...predictions.flatMap(p => p.position_probs)
+    ...teamsWithProbMap.flatMap(t => positions.map(pos => t.probMap[pos] || 0))
   );
 
   return (
@@ -570,6 +579,9 @@ function PositionHeatmap({ data }) {
         <h2 className="font-semibold text-slate-900">
           Position Probability Distribution (Week {data.week})
         </h2>
+        <p className="text-xs text-slate-500 mt-1">
+          Based on {(data.simulations || 100000).toLocaleString()} IRT simulations
+        </p>
       </div>
       <div className="card-body overflow-x-auto">
         <table className="w-full text-xs">
@@ -591,25 +603,28 @@ function PositionHeatmap({ data }) {
             </tr>
           </thead>
           <tbody>
-            {predictions.map((team) => (
+            {teamsWithProbMap.map((team) => (
               <tr key={team.team} className="border-t border-slate-100">
                 <td className="py-1.5 px-1 font-medium text-slate-900 sticky left-0 bg-white whitespace-nowrap">
                   {team.team}
                 </td>
-                {team.position_probs.map((prob, idx) => (
-                  <td
-                    key={idx}
-                    className="py-1.5 px-1 text-center"
-                    style={{
-                      backgroundColor: prob > 0.001
-                        ? `rgba(239, 68, 68, ${Math.min(prob / maxProb, 1) * 0.9})`
-                        : 'transparent',
-                      color: prob > maxProb * 0.5 ? 'white' : prob > 0.01 ? '#1e293b' : '#94a3b8',
-                    }}
-                  >
-                    {prob >= 0.01 ? `${(prob * 100).toFixed(0)}` : prob > 0.001 ? '<1' : '-'}
-                  </td>
-                ))}
+                {positions.map((pos) => {
+                  const prob = team.probMap[pos] || 0;  // prob is in % (e.g., 91)
+                  return (
+                    <td
+                      key={pos}
+                      className="py-1.5 px-1 text-center"
+                      style={{
+                        backgroundColor: prob > 0.1
+                          ? `rgba(239, 68, 68, ${Math.min(prob / maxProb, 1) * 0.9})`
+                          : 'transparent',
+                        color: prob > maxProb * 0.5 ? 'white' : prob > 1 ? '#1e293b' : '#94a3b8',
+                      }}
+                    >
+                      {prob >= 1 ? `${prob.toFixed(0)}` : prob > 0.1 ? '<1' : '-'}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
