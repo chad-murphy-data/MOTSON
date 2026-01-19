@@ -79,6 +79,7 @@ def main():
             'relegation': 0,
             'total_points': 0,
             'total_position': 0,
+            'position_counts': {pos: 0 for pos in range(1, 21)},  # Track all 20 positions
         }
         for team in EPL_TEAMS_2025_26
     }
@@ -103,6 +104,9 @@ def main():
             team_counts[team]['relegation'] += int(r.p_relegation * batch_size)
             team_counts[team]['total_points'] += r.predicted_final_points * batch_size
             team_counts[team]['total_position'] += r.predicted_position * batch_size
+            # Track position distribution
+            for pos, prob in r.position_distribution:
+                team_counts[team]['position_counts'][pos] += int(prob * batch_size)
 
         batch_elapsed = time.time() - batch_start
         total_elapsed = time.time() - start_time
@@ -143,6 +147,12 @@ def main():
         exp_pts = counts['total_points'] / total_sims
         exp_pos = counts['total_position'] / total_sims
 
+        # Calculate position probabilities (%)
+        position_probs = {
+            pos: counts['position_counts'][pos] / total_sims * 100
+            for pos in range(1, 21)
+        }
+
         results_data["teams"][team] = {
             "p_title": p_title,
             "p_top4": p_top4,
@@ -154,6 +164,7 @@ def main():
             "current_points": current_points.get(team, 0),
             "title_count": counts['title'],
             "relegation_count": counts['relegation'],
+            "position_probs": position_probs,  # Full position distribution
         }
 
         print(f"{team:20} {p_title:>13.5f}% {p_top4:>13.5f}% {p_rel:>13.5f}% {exp_pts:>10.2f}")

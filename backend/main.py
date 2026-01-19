@@ -1259,6 +1259,48 @@ async def get_100m_simulation():
     }
 
 
+@app.get("/irt/simulation/100m/positions")
+async def get_100m_position_distributions():
+    """Get position probability distributions from 100M simulation results for the heatmap."""
+    import json
+    from pathlib import Path
+
+    results_path = Path(__file__).parent.parent / "data" / "100m_simulation_results.json"
+
+    if not results_path.exists():
+        raise HTTPException(status_code=404, detail="100M simulation results not found")
+
+    with open(results_path, 'r') as f:
+        data = json.load(f)
+
+    # Format response for heatmap - sorted by expected position
+    sorted_teams = sorted(
+        data["teams"].items(),
+        key=lambda x: x[1].get("expected_position", 20)
+    )
+
+    teams_data = []
+    for team, stats in sorted_teams:
+        position_probs = stats.get("position_probs", {})
+        # Format as array of {position, probability} for the heatmap
+        position_distribution = [
+            {"position": pos, "probability": position_probs.get(str(pos), position_probs.get(pos, 0))}
+            for pos in range(1, 21)
+        ]
+        teams_data.append({
+            "team": team,
+            "predicted_position": round(stats["expected_position"], 2),
+            "position_distribution": position_distribution,
+        })
+
+    return {
+        "week": data.get("week"),
+        "simulations": data.get("total_simulations", 100000000),
+        "generated_at": data.get("generated_at"),
+        "teams": teams_data,
+    }
+
+
 @app.post("/irt/counterfactual")
 async def run_irt_counterfactual(
     scenarios: List[IRTCounterfactualRequest],

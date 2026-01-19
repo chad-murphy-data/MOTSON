@@ -82,6 +82,7 @@ export const getIRTMatchPrediction = (homeTeam, awayTeam) =>
 // IRT Season Simulation endpoints
 export const getIRTSimulationCurrent = () => fetchApi('/irt/simulation/current');
 export const getIRT100MSimulation = () => fetchApi('/irt/simulation/100m');
+export const getIRT100MPositions = () => fetchApi('/irt/simulation/100m/positions');
 export const getIRTSimulationHistory = (team = null) =>
   fetchApi(`/irt/simulation/history${team ? `?team=${encodeURIComponent(team)}` : ''}`);
 export const getIRTDistributions = (nSimulations = 100000) =>

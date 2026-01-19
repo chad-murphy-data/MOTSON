@@ -16,7 +16,7 @@ import {
   getHistoricalPoints,
   getHistoricalStrength,
   getHistoricalTitleRace,
-  getIRTDistributions,
+  getIRT100MPositions,
 } from '../api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorMessage from '../components/ErrorMessage';
@@ -66,8 +66,8 @@ export default function Analytics() {
   });
 
   const positionsQuery = useQuery({
-    queryKey: ['irtDistributions'],
-    queryFn: () => getIRTDistributions(10000),  // Reduced from 100k to avoid memory issues
+    queryKey: ['100mPositions'],
+    queryFn: getIRT100MPositions,  // Use pre-computed 100M results - no memory issues!
   });
 
   const titleRaceQuery = useQuery({
