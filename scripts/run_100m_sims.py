@@ -33,19 +33,23 @@ def main():
     irt_states = db.get_all_irt_team_states()
     print(f"Loaded IRT states for {len(irt_states)} teams")
 
+    # Determine current week from match results
+    results = db.get_match_results()
+    current_week = max(r.matchweek for r in results) if results else 0
+    print(f"Current matchweek: {current_week}")
+
     # Get fixtures
     fixtures = db.get_fixtures()
     remaining = [
         {'home_team': f['home_team'], 'away_team': f['away_team'], 'matchweek': f['matchweek']}
-        for f in fixtures if f['matchweek'] > 22
+        for f in fixtures if f['matchweek'] > current_week
     ]
     print(f"Remaining fixtures: {len(remaining)}")
 
-    # Get current points at week 22
-    results = db.get_match_results()
+    # Get current points
     current_points = {team: 0 for team in EPL_TEAMS_2025_26}
     for r in results:
-        if r.matchweek <= 22:
+        if r.matchweek <= current_week:
             if r.home_goals > r.away_goals:
                 current_points[r.home_team] += 3
             elif r.home_goals < r.away_goals:
@@ -54,7 +58,7 @@ def main():
                 current_points[r.home_team] += 1
                 current_points[r.away_team] += 1
 
-    print(f"Current points loaded for week 22")
+    print(f"Current points loaded for week {current_week}")
     print()
 
     # Configuration
@@ -116,7 +120,7 @@ def main():
     results_data = {
         "generated_at": datetime.utcnow().isoformat(),
         "total_simulations": total_sims,
-        "week": 22,
+        "week": current_week,
         "teams": {}
     }
 

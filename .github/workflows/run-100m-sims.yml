@@ -1,0 +1,100 @@
+name: Run 100M Simulations
+
+on:
+  # Run every Monday at 6 AM UTC (after weekend matches)
+  schedule:
+    - cron: '0 6 * * 1'
+
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: 'Force run even if no new results'
+        required: false
+        default: 'true'
+
+jobs:
+  simulate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120  # 2 hour timeout for safety
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run 100M simulations
+        run: |
+          echo "Starting 100M simulation run..."
+          python scripts/run_100m_sims.py
+          echo "Simulations complete!"
+
+      - name: Update season_predictions table
+        run: |
+          echo "Syncing 100M data to database..."
+          python -c "
+import json
+import sqlite3
+from pathlib import Path
+
+# Load 100M results
+with open('data/100m_simulation_results.json') as f:
+    data = json.load(f)
+
+week = data['week']
+teams = data['teams']
+
+conn = sqlite3.connect('data/motson.db')
+cursor = conn.cursor()
+
+for team, stats in teams.items():
+    cursor.execute('''
+        INSERT OR REPLACE INTO season_predictions
+        (team, week, expected_points, expected_position, title_prob, top4_prob,
+         relegation_prob, position_probs, last_updated)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ''', (
+        team,
+        week,
+        stats['expected_points'],
+        stats['expected_position'],
+        stats['p_title'] / 100,
+        stats['p_top4'] / 100,
+        stats['p_relegation'] / 100,
+        '[]'
+    ))
+
+conn.commit()
+conn.close()
+print(f'Updated season_predictions for {len(teams)} teams at week {week}')
+"
+
+      - name: Commit and push results
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add data/100m_simulation_results.json data/motson.db
+          git diff --staged --quiet || git commit -m "Update 100M simulation results (Week $(python -c "import json; print(json.load(open('data/100m_simulation_results.json'))['week'])"))"
+          git push
+
+      - name: Trigger Render deploy (optional)
+        if: success()
+        run: |
+          if [ -n "${{ secrets.RENDER_DEPLOY_HOOK }}" ]; then
+            curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
+            echo "Triggered Render redeploy"
+          else
+            echo "No RENDER_DEPLOY_HOOK secret set, skipping deploy trigger"
+          fi
