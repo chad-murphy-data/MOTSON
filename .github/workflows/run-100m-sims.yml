@@ -17,13 +17,13 @@ on:
       skip_simulations:
         description: 'Skip simulations (just test deploy hook)'
         required: false
-        default: 'false'
+        default: false
         type: boolean
 
 jobs:
   simulate:
     runs-on: ubuntu-latest
-    timeout-minutes: 120  # 2 hour timeout for safety
+    timeout-minutes: 120
 
     steps:
       - name: Checkout repository
@@ -45,127 +45,61 @@ jobs:
       - name: Check for new results
         id: check_results
         run: |
-          # Get current week from database
-          CURRENT_WEEK=$(python -c "
-          import sqlite3
-          conn = sqlite3.connect('data/motson.db')
-          cursor = conn.cursor()
-          cursor.execute('SELECT MAX(matchweek) FROM match_results')
-          result = cursor.fetchone()[0]
-          print(result or 0)
-          ")
-
-          # Get week from last simulation
-          LAST_SIM_WEEK=$(python -c "
-          import json
-          try:
-              with open('data/100m_simulation_results.json') as f:
-                  print(json.load(f).get('week', 0))
-          except:
-              print(0)
-          ")
-
+          CURRENT_WEEK=$(python -c "import sqlite3; conn = sqlite3.connect('data/motson.db'); c = conn.cursor(); c.execute('SELECT MAX(matchweek) FROM match_results'); print(c.fetchone()[0] or 0)")
+          LAST_SIM_WEEK=$(python -c "import json; print(json.load(open('data/100m_simulation_results.json')).get('week', 0))" 2>/dev/null || echo "0")
           echo "Current matchweek: $CURRENT_WEEK"
           echo "Last simulation week: $LAST_SIM_WEEK"
           echo "current_week=$CURRENT_WEEK" >> $GITHUB_OUTPUT
           echo "last_sim_week=$LAST_SIM_WEEK" >> $GITHUB_OUTPUT
-
           if [ "$CURRENT_WEEK" -gt "$LAST_SIM_WEEK" ]; then
-            echo "New results detected! Running simulations."
             echo "should_run=true" >> $GITHUB_OUTPUT
           else
-            echo "No new results. Skipping simulations."
             echo "should_run=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Run 100M simulations
-        if: steps.check_results.outputs.should_run == 'true' && inputs.skip_simulations != 'true'
+        if: steps.check_results.outputs.should_run == 'true' && inputs.skip_simulations != true
         run: |
           echo "Starting 100M simulation run..."
           python scripts/run_100m_sims.py
           echo "Simulations complete!"
 
       - name: Update season_predictions table
-        if: steps.check_results.outputs.should_run == 'true' && inputs.skip_simulations != 'true'
-        run: |
-          echo "Syncing 100M data to database..."
-          python -c "
-import json
-import sqlite3
-from pathlib import Path
-
-# Load 100M results
-with open('data/100m_simulation_results.json') as f:
-    data = json.load(f)
-
-week = data['week']
-teams = data['teams']
-
-conn = sqlite3.connect('data/motson.db')
-cursor = conn.cursor()
-
-for team, stats in teams.items():
-    cursor.execute('''
-        INSERT OR REPLACE INTO season_predictions
-        (team, week, expected_points, expected_position, title_prob, top4_prob,
-         relegation_prob, position_probs, last_updated)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    ''', (
-        team,
-        week,
-        stats['expected_points'],
-        stats['expected_position'],
-        stats['p_title'] / 100,
-        stats['p_top4'] / 100,
-        stats['p_relegation'] / 100,
-        '[]'
-    ))
-
-conn.commit()
-conn.close()
-print(f'Updated season_predictions for {len(teams)} teams at week {week}')
-"
+        if: steps.check_results.outputs.should_run == 'true' && inputs.skip_simulations != true
+        run: python scripts/sync_100m_to_db.py
 
       - name: Commit and push results
-        if: steps.check_results.outputs.should_run == 'true' && inputs.skip_simulations != 'true'
+        if: steps.check_results.outputs.should_run == 'true' && inputs.skip_simulations != true
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add data/100m_simulation_results.json data/motson.db
-          git diff --staged --quiet || git commit -m "Update 100M simulation results (Week $(python -c "import json; print(json.load(open('data/100m_simulation_results.json'))['week'])"))"
+          git diff --staged --quiet || git commit -m "Update 100M simulation results (Week ${{ steps.check_results.outputs.current_week }})"
           git push
 
       - name: Trigger Render deploy
         if: success()
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
         run: |
-          if [ -n "${{ secrets.RENDER_DEPLOY_HOOK }}" ]; then
+          if [ -n "$RENDER_DEPLOY_HOOK" ]; then
             echo "Triggering Render redeploy..."
-            RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}")
-            HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-            BODY=$(echo "$RESPONSE" | sed '$d')
-
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$RENDER_DEPLOY_HOOK")
             echo "Response code: $HTTP_CODE"
-            echo "Response body: $BODY"
-
             if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
-              echo "✅ Render deploy triggered successfully!"
+              echo "Render deploy triggered successfully!"
             else
-              echo "⚠️ Render deploy may have failed (HTTP $HTTP_CODE)"
+              echo "Render deploy may have failed (HTTP $HTTP_CODE)"
             fi
           else
-            echo "❌ No RENDER_DEPLOY_HOOK secret set, skipping deploy trigger"
+            echo "No RENDER_DEPLOY_HOOK secret set, skipping deploy trigger"
           fi
 
       - name: Summary
         run: |
           echo "## Simulation Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ steps.check_results.outputs.should_run }}" == "true" ] && [ "${{ inputs.skip_simulations }}" != "true" ]; then
-            echo "✅ **100M simulations completed for Week ${{ steps.check_results.outputs.current_week }}**" >> $GITHUB_STEP_SUMMARY
-          elif [ "${{ inputs.skip_simulations }}" == "true" ]; then
-            echo "⏭️ **Simulations skipped (test run)**" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⏭️ **No new results - simulations skipped**" >> $GITHUB_STEP_SUMMARY
-            echo "Current week: ${{ steps.check_results.outputs.current_week }}" >> $GITHUB_STEP_SUMMARY
-            echo "Last sim week: ${{ steps.check_results.outputs.last_sim_week }}" >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "- Current week: ${{ steps.check_results.outputs.current_week }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Last sim week: ${{ steps.check_results.outputs.last_sim_week }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Should run: ${{ steps.check_results.outputs.should_run }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Skip requested: ${{ inputs.skip_simulations }}" >> $GITHUB_STEP_SUMMARY
