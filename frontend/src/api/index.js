@@ -56,7 +56,7 @@ export const getHistoricalTitleRace = () => fetchApi('/history/title-race');
 export const getResults = (matchweek) =>
   fetchApi(`/results${matchweek ? `?matchweek=${matchweek}` : ''}`);
 
-// Counterfactual
+// Counterfactual - for "what if" scenarios with past match results
 export const runCounterfactual = (scenarios) =>
   fetchApi('/counterfactual', {
     method: 'POST',

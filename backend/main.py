@@ -8,6 +8,7 @@ Update on cumulative calibration, not individual surprises."
 """
 
 import os
+import json
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -342,9 +343,47 @@ async def get_next_week_predictions():
 
 # Season outcome probabilities
 
+def _load_100m_data():
+    """Load 100M simulation results if available."""
+    from pathlib import Path
+    results_path = Path(__file__).parent.parent / "data" / "100m_simulation_results.json"
+    if results_path.exists():
+        with open(results_path, 'r') as f:
+            return json.load(f)
+    return None
+
+
 @app.get("/probabilities/season")
 async def get_season_probabilities():
-    """Get title/top4/relegation probabilities for all teams."""
+    """Get title/top4/relegation probabilities for all teams.
+
+    Uses 100M simulation data when available for higher precision.
+    """
+    # Try 100M data first
+    sim_100m = _load_100m_data()
+    if sim_100m and sim_100m.get("teams"):
+        teams_data = sim_100m["teams"]
+        predictions = [
+            {
+                "team": team,
+                "title_prob": data["p_title"] / 100,  # Convert from percentage
+                "top4_prob": data["p_top4"] / 100,
+                "top6_prob": data["p_top6"] / 100,
+                "relegation_prob": data["p_relegation"] / 100,
+                "expected_position": data["expected_position"],
+                "expected_points": data["expected_points"],
+                "current_points": data.get("current_points", 0),
+            }
+            for team, data in teams_data.items()
+        ]
+        return {
+            "predictions": predictions,
+            "as_of_week": sim_100m.get("week", 0),
+            "source": "100m_simulation",
+            "total_simulations": sim_100m.get("total_simulations"),
+        }
+
+    # Fall back to database
     db = get_db()
     predictions = db.get_season_predictions()
 
@@ -354,12 +393,28 @@ async def get_season_probabilities():
     return {
         "predictions": predictions,
         "as_of_week": predictions[0]["week"] if predictions else 0,
+        "source": "database",
     }
 
 
 @app.get("/probabilities/title")
 async def get_title_race():
-    """Get title race probabilities, sorted by likelihood."""
+    """Get title race probabilities, sorted by likelihood.
+
+    Uses 100M simulation data when available for higher precision.
+    """
+    # Try 100M data first
+    sim_100m = _load_100m_data()
+    if sim_100m and sim_100m.get("teams"):
+        teams_data = sim_100m["teams"]
+        title_probs = sorted(
+            [{"team": team, "probability": data["p_title"] / 100} for team, data in teams_data.items()],
+            key=lambda x: x["probability"],
+            reverse=True,
+        )
+        return {"title_race": title_probs[:10], "source": "100m_simulation"}
+
+    # Fall back to database
     db = get_db()
     predictions = db.get_season_predictions()
 
@@ -372,12 +427,27 @@ async def get_title_race():
         reverse=True,
     )
 
-    return {"title_race": title_probs[:10]}  # Top 10 contenders
+    return {"title_race": title_probs[:10], "source": "database"}
 
 
 @app.get("/probabilities/relegation")
 async def get_relegation_battle():
-    """Get relegation battle probabilities, sorted by risk."""
+    """Get relegation battle probabilities, sorted by risk.
+
+    Uses 100M simulation data when available for higher precision.
+    """
+    # Try 100M data first
+    sim_100m = _load_100m_data()
+    if sim_100m and sim_100m.get("teams"):
+        teams_data = sim_100m["teams"]
+        relegation_probs = sorted(
+            [{"team": team, "probability": data["p_relegation"] / 100} for team, data in teams_data.items()],
+            key=lambda x: x["probability"],
+            reverse=True,
+        )
+        return {"relegation_battle": relegation_probs[:10], "source": "100m_simulation"}
+
+    # Fall back to database
     db = get_db()
     predictions = db.get_season_predictions()
 
@@ -390,7 +460,7 @@ async def get_relegation_battle():
         reverse=True,
     )
 
-    return {"relegation_battle": relegation_probs[:10]}
+    return {"relegation_battle": relegation_probs[:10], "source": "database"}
 
 
 # Historical data endpoints
@@ -527,22 +597,32 @@ async def run_counterfactual(scenarios: List[CounterfactualRequest]):
     db = get_db()
     simulator = MonteCarloSimulator()
 
-    # Try database first for fixtures
+    # Get fixtures and match results
     cached_fixtures = db.get_fixtures()
+    match_results = db.get_match_results()
+
+    # Create a lookup for match results by match_id
+    results_lookup = {str(r.match_id): r for r in match_results}
 
     if cached_fixtures:
-        # Convert cached fixtures to Fixture objects
-        all_fixtures = [
-            Fixture(
-                match_id=f["match_id"],
+        # Convert cached fixtures to Fixture objects, merging in goal data from results
+        all_fixtures = []
+        for f in cached_fixtures:
+            match_id = f["match_id"]
+            result = results_lookup.get(str(match_id))
+
+            fixture = Fixture(
+                match_id=match_id,
                 matchweek=f["matchweek"],
                 date=datetime.fromisoformat(f["date"]) if isinstance(f["date"], str) else f["date"],
                 home_team=f["home_team"],
                 away_team=f["away_team"],
                 status=f["status"],
+                # Add goal data from match results if available
+                home_goals=result.home_goals if result else None,
+                away_goals=result.away_goals if result else None,
             )
-            for f in cached_fixtures
-        ]
+            all_fixtures.append(fixture)
     else:
         # Fallback to API
         api = FootballDataAPI()
