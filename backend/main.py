@@ -525,7 +525,9 @@ async def get_historical_points():
 async def get_historical_strength():
     """Get historical team strength (theta) trajectories for all teams."""
     db = get_db()
-    history = db.get_all_teams_history()
+
+    # Use IRT history which has the proper theta values
+    history = db.get_all_irt_teams_history()
 
     if not history:
         raise HTTPException(status_code=404, detail="No historical data available - run update first")
@@ -538,10 +540,7 @@ async def get_historical_strength():
             teams_data[team] = []
         teams_data[team].append({
             "week": record["week"],
-            "theta_home": record["theta_home"],
-            "theta_away": record["theta_away"],
-            "sigma": record["sigma"],
-            "theta_avg": (record["theta_home"] + record["theta_away"]) / 2,
+            "theta_avg": record["theta"],  # IRT theta is already the combined strength
         })
 
     return {
