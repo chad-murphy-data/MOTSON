@@ -1,0 +1,90 @@
+name: Fetch Match Results
+
+on:
+  # Run every 3 hours to catch new results
+  schedule:
+    - cron: '0 */3 * * *'   # Every 3 hours
+
+  # Manual trigger
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Get current results count
+        id: before
+        run: |
+          COUNT=$(python -c "import sqlite3; conn = sqlite3.connect('data/motson.db'); c = conn.cursor(); c.execute('SELECT COUNT(*) FROM match_results'); print(c.fetchone()[0])")
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "Results before fetch: $COUNT"
+
+      - name: Fetch latest results from API
+        env:
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+        run: |
+          echo "Fetching latest results from football-data.org..."
+          python scripts/fetch_results.py
+
+      - name: Check for new results
+        id: after
+        run: |
+          COUNT=$(python -c "import sqlite3; conn = sqlite3.connect('data/motson.db'); c = conn.cursor(); c.execute('SELECT COUNT(*) FROM match_results'); print(c.fetchone()[0])")
+          WEEK=$(python -c "import sqlite3; conn = sqlite3.connect('data/motson.db'); c = conn.cursor(); c.execute('SELECT MAX(matchweek) FROM match_results'); print(c.fetchone()[0] or 0)")
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "week=$WEEK" >> $GITHUB_OUTPUT
+          echo "Results after fetch: $COUNT (Week $WEEK)"
+
+          if [ "$COUNT" -gt "${{ steps.before.outputs.count }}" ]; then
+            echo "has_new=true" >> $GITHUB_OUTPUT
+            echo "New results found!"
+          else
+            echo "has_new=false" >> $GITHUB_OUTPUT
+            echo "No new results"
+          fi
+
+      - name: Commit and push if new results
+        if: steps.after.outputs.has_new == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add data/motson.db
+          git diff --staged --quiet || git commit -m "Update match results (Week ${{ steps.after.outputs.week }})"
+          git push
+
+      - name: Trigger Render deploy if new results
+        if: steps.after.outputs.has_new == 'true'
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -n "$RENDER_DEPLOY_HOOK" ]; then
+            echo "Triggering Render redeploy..."
+            curl -s -X POST "$RENDER_DEPLOY_HOOK"
+          fi
+
+      - name: Summary
+        run: |
+          echo "## Fetch Results Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Results before: ${{ steps.before.outputs.count }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Results after: ${{ steps.after.outputs.count }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Current week: ${{ steps.after.outputs.week }}" >> $GITHUB_STEP_SUMMARY
+          echo "- New results: ${{ steps.after.outputs.has_new }}" >> $GITHUB_STEP_SUMMARY

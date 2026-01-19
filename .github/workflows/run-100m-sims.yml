@@ -1,16 +1,16 @@
 name: Run 100M Simulations
 
 on:
-  # Run every night at 6am UTC (after most matches finish)
-  # The workflow is smart - it checks if new results exist and skips if nothing changed
+  # Run once daily at 6am UTC (overnight, after matches)
+  # Only runs simulations if new results exist since last sim
   schedule:
     - cron: '0 6 * * *'   # Daily at 6am UTC
 
   # Manual trigger
   workflow_dispatch:
     inputs:
-      skip_simulations:
-        description: 'Skip simulations (just test deploy hook)'
+      force_run:
+        description: 'Force run even if no new results'
         required: false
         default: false
         type: boolean
@@ -26,6 +26,10 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Pull latest changes
+        run: |
+          git pull origin main || true
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -36,13 +40,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-
-      - name: Fetch latest results from API
-        env:
-          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
-        run: |
-          echo "Fetching latest results from football-data.org..."
-          python scripts/fetch_results.py
 
       - name: Check for new results
         id: check_results
@@ -60,18 +57,18 @@ jobs:
           fi
 
       - name: Run 100M simulations
-        if: steps.check_results.outputs.should_run == 'true' && inputs.skip_simulations != true
+        if: (steps.check_results.outputs.should_run == 'true') || (inputs.force_run == true)
         run: |
           echo "Starting 100M simulation run..."
           python scripts/run_100m_sims.py
           echo "Simulations complete!"
 
       - name: Update season_predictions table
-        if: steps.check_results.outputs.should_run == 'true' && inputs.skip_simulations != true
+        if: (steps.check_results.outputs.should_run == 'true') || (inputs.force_run == true)
         run: python scripts/sync_100m_to_db.py
 
       - name: Commit and push results
-        if: steps.check_results.outputs.should_run == 'true' && inputs.skip_simulations != true
+        if: (steps.check_results.outputs.should_run == 'true') || (inputs.force_run == true)
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
@@ -80,7 +77,7 @@ jobs:
           git push
 
       - name: Trigger Render deploy
-        if: success()
+        if: (steps.check_results.outputs.should_run == 'true') || (inputs.force_run == true)
         env:
           RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
         run: |
@@ -104,4 +101,4 @@ jobs:
           echo "- Current week: ${{ steps.check_results.outputs.current_week }}" >> $GITHUB_STEP_SUMMARY
           echo "- Last sim week: ${{ steps.check_results.outputs.last_sim_week }}" >> $GITHUB_STEP_SUMMARY
           echo "- Should run: ${{ steps.check_results.outputs.should_run }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Skip requested: ${{ inputs.skip_simulations }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Force run: ${{ inputs.force_run }}" >> $GITHUB_STEP_SUMMARY
