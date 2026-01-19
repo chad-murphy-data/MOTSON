@@ -94,13 +94,13 @@ export default function Analytics() {
     return data ? Object.keys(data).sort() : [];
   }, [view, titleRaceQuery.data, pointsQuery.data, strengthQuery.data]);
 
-  // Initialize with top 6 teams if none selected
+  // Initialize with top 3 teams if none selected
   React.useEffect(() => {
     if (allTeams.length > 0 && selectedTeams.length === 0) {
-      // Select some interesting teams by default
-      const defaultTeams = ['Arsenal', 'Liverpool', 'Man City', 'Chelsea', 'Man United', 'Spurs']
+      // Select the title contenders by default
+      const defaultTeams = ['Arsenal', 'Liverpool', 'Man City']
         .filter(t => allTeams.includes(t));
-      setSelectedTeams(defaultTeams.slice(0, 6));
+      setSelectedTeams(defaultTeams);
     }
   }, [allTeams, selectedTeams]);
 
@@ -321,17 +321,17 @@ function PointsChart({ data, selectedTeams }) {
       </div>
       <div className="card-body">
         <ResponsiveContainer width="100%" height={500}>
-          <LineChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+          <LineChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis
               dataKey="week"
               tick={{ fontSize: 12, fill: '#64748b' }}
-              label={{ value: 'Matchweek', position: 'bottom', offset: 0 }}
+              label={{ value: 'Matchweek', position: 'bottom', offset: 10 }}
             />
             <YAxis
               tick={{ fontSize: 12, fill: '#64748b' }}
               label={{ value: 'Points', angle: -90, position: 'insideLeft' }}
-              domain={['auto', 'auto']}
+              domain={[0, 'auto']}
             />
             <Tooltip
               contentStyle={{
@@ -340,7 +340,7 @@ function PointsChart({ data, selectedTeams }) {
                 borderRadius: '8px',
               }}
             />
-            <Legend />
+            <Legend wrapperStyle={{ paddingTop: '20px' }} />
             {selectedTeams.map(team => (
               <React.Fragment key={team}>
                 <Line
@@ -417,17 +417,17 @@ function StrengthChart({ data, selectedTeams }) {
       </div>
       <div className="card-body">
         <ResponsiveContainer width="100%" height={500}>
-          <LineChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+          <LineChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis
               dataKey="week"
               tick={{ fontSize: 12, fill: '#64748b' }}
-              label={{ value: 'Matchweek', position: 'bottom', offset: 0 }}
+              label={{ value: 'Matchweek', position: 'bottom', offset: 10 }}
             />
             <YAxis
               tick={{ fontSize: 12, fill: '#64748b' }}
               label={{ value: 'Theta (Strength)', angle: -90, position: 'insideLeft' }}
-              domain={['auto', 'auto']}
+              domain={['auto', 'auto']}  // Keep auto for theta since it can be negative
             />
             <Tooltip
               contentStyle={{
@@ -437,7 +437,7 @@ function StrengthChart({ data, selectedTeams }) {
               }}
               formatter={(value) => [value.toFixed(3), 'Theta']}
             />
-            <Legend />
+            <Legend wrapperStyle={{ paddingTop: '20px' }} />
             {selectedTeams.map(team => (
               <Line
                 key={team}
@@ -504,12 +504,12 @@ function TitleRaceChart({ data, selectedTeams }) {
       </div>
       <div className="card-body">
         <ResponsiveContainer width="100%" height={500}>
-          <LineChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+          <LineChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis
               dataKey="week"
               tick={{ fontSize: 12, fill: '#64748b' }}
-              label={{ value: 'Matchweek', position: 'bottom', offset: 0 }}
+              label={{ value: 'Matchweek', position: 'bottom', offset: 10 }}
             />
             <YAxis
               tick={{ fontSize: 12, fill: '#64748b' }}
@@ -525,7 +525,7 @@ function TitleRaceChart({ data, selectedTeams }) {
               }}
               formatter={(value) => [`${value.toFixed(1)}%`, 'Title Prob']}
             />
-            <Legend />
+            <Legend wrapperStyle={{ paddingTop: '20px' }} />
             {selectedTeams.map(team => (
               <Line
                 key={team}
