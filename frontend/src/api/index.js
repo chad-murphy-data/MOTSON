@@ -69,3 +69,29 @@ export const triggerUpdate = () =>
 export const getUpdateExplanations = () => fetchApi('/admin/explanations');
 export const getModelConfig = () => fetchApi('/admin/config');
 export const getLastUpdate = () => fetchApi('/admin/last-update');
+
+// IRT Model endpoints
+export const getIRTTeams = () => fetchApi('/irt/teams');
+export const getIRTTeamDetail = (teamName) => fetchApi(`/irt/team/${encodeURIComponent(teamName)}`);
+export const getIRTTeamHistory = (teamName) => fetchApi(`/irt/team/${encodeURIComponent(teamName)}/history`);
+export const getIRTAllHistory = () => fetchApi('/irt/history/all');
+export const getIRTRankings = () => fetchApi('/irt/rankings');
+export const getIRTMatchPrediction = (homeTeam, awayTeam) =>
+  fetchApi(`/irt/predict/${encodeURIComponent(homeTeam)}/${encodeURIComponent(awayTeam)}`);
+
+// IRT Season Simulation endpoints
+export const getIRTSimulationCurrent = () => fetchApi('/irt/simulation/current');
+export const getIRT100MSimulation = () => fetchApi('/irt/simulation/100m');
+export const getIRTSimulationHistory = (team = null) =>
+  fetchApi(`/irt/simulation/history${team ? `?team=${encodeURIComponent(team)}` : ''}`);
+export const getIRTDistributions = (nSimulations = 100000) =>
+  fetchApi(`/irt/simulation/distributions?n_simulations=${nSimulations}`);
+export const getIRTFunStats = (nSimulations = 100000) =>
+  fetchApi(`/irt/simulation/fun-stats?n_simulations=${nSimulations}`);
+export const runIRTCounterfactual = (scenarios, nSimulations = 10000) =>
+  fetchApi(`/irt/counterfactual?n_simulations=${nSimulations}`, {
+    method: 'POST',
+    body: JSON.stringify(scenarios),
+  });
+export const getIRTRivalries = (nSimulations = 100000) =>
+  fetchApi(`/irt/simulation/rivalries?n_simulations=${nSimulations}`);

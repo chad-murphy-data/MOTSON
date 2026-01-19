@@ -1568,6 +1568,198 @@ async def get_fun_stats(n_simulations: int = Query(default=100000, ge=10000, le=
     }
 
 
+@app.get("/irt/simulation/rivalries")
+async def get_rivalry_comparisons(n_simulations: int = Query(default=100000, ge=10000, le=500000)):
+    """
+    Get head-to-head rivalry comparison probabilities.
+
+    Who finishes higher: Everton vs Liverpool, United vs City, Arsenal vs Spurs, etc.
+    """
+    import numpy as np
+
+    db = get_db()
+
+    # Get IRT states
+    irt_states = db.get_all_irt_team_states()
+    if not irt_states:
+        raise HTTPException(status_code=404, detail="No IRT states available")
+
+    # Get current week
+    current_week = db.get_current_week()
+
+    # Get fixtures and results
+    fixtures = db.get_fixtures()
+    results = db.get_match_results()
+
+    # Calculate current points
+    current_points = {team: 0 for team in EPL_TEAMS_2025_26}
+    for r in results:
+        if r.matchweek <= current_week:
+            if r.home_goals > r.away_goals:
+                current_points[r.home_team] += 3
+            elif r.home_goals < r.away_goals:
+                current_points[r.away_team] += 3
+            else:
+                current_points[r.home_team] += 1
+                current_points[r.away_team] += 1
+
+    # Get remaining fixtures
+    remaining_fixtures = [
+        {"home_team": f["home_team"], "away_team": f["away_team"], "matchweek": f["matchweek"]}
+        for f in fixtures if f["matchweek"] > current_week
+    ]
+
+    # Define classic rivalries
+    rivalries = [
+        ("Liverpool", "Everton", "Merseyside Derby"),
+        ("Manchester City", "Manchester Utd", "Manchester Derby"),
+        ("Arsenal", "Tottenham", "North London Derby"),
+        ("Arsenal", "Chelsea", "London Rivalry"),
+        ("Chelsea", "Tottenham", "London Rivalry"),
+        ("Liverpool", "Manchester Utd", "North-West Derby"),
+        ("Arsenal", "Liverpool", "Title Race"),
+        ("Newcastle Utd", "Sunderland", "Tyne-Wear Derby"),
+        ("Aston Villa", "West Ham", "Midlands vs London"),
+        ("Leeds United", "Manchester Utd", "Roses Rivalry"),
+    ]
+
+    # Filter to teams that exist in current season
+    valid_rivalries = [
+        (t1, t2, name) for t1, t2, name in rivalries
+        if t1 in irt_states and t2 in irt_states
+    ]
+
+    # Run simulation with seed for reproducibility
+    rng = np.random.default_rng(42)
+    teams = list(irt_states.keys())
+    n_teams = len(teams)
+    team_to_idx = {t: i for i, t in enumerate(teams)}
+
+    # Filter fixtures to only include teams we have states for
+    valid_fixtures = [
+        f for f in remaining_fixtures
+        if f["home_team"] in irt_states and f["away_team"] in irt_states
+    ]
+    n_fixtures = len(valid_fixtures)
+
+    if n_fixtures == 0:
+        # Season complete - use final standings
+        sorted_teams = sorted(teams, key=lambda t: -current_points.get(t, 0))
+        final_positions = {t: pos for pos, t in enumerate(sorted_teams, 1)}
+
+        rivalry_results = []
+        for t1, t2, name in valid_rivalries:
+            pos1 = final_positions[t1]
+            pos2 = final_positions[t2]
+            rivalry_results.append({
+                "team1": t1,
+                "team2": t2,
+                "rivalry_name": name,
+                "team1_higher": 100.0 if pos1 < pos2 else 0.0,
+                "team2_higher": 100.0 if pos2 < pos1 else 0.0,
+                "same_position": 100.0 if pos1 == pos2 else 0.0,
+                "team1_current_points": current_points[t1],
+                "team2_current_points": current_points[t2],
+            })
+        return {"week": current_week, "rivalries": rivalry_results, "simulations": 0}
+
+    # Build fixture arrays
+    home_idx = np.array([team_to_idx[f["home_team"]] for f in valid_fixtures])
+    away_idx = np.array([team_to_idx[f["away_team"]] for f in valid_fixtures])
+
+    # Build parameter arrays
+    thetas = np.array([irt_states[t].theta for t in teams])
+    b_homes = np.array([irt_states[t].b_home for t in teams])
+    b_aways = np.array([irt_states[t].b_away for t in teams])
+
+    # Calculate gaps for all fixtures (vectorized)
+    home_thetas = thetas[home_idx]
+    away_thetas = thetas[away_idx]
+    home_b_homes = b_homes[home_idx]
+    away_b_aways = b_aways[away_idx]
+
+    m_home = home_thetas - away_b_aways
+    m_away = away_thetas - home_b_homes
+    gaps = m_home - m_away
+
+    # Import gap conversion
+    from .models.season_simulator import vectorized_gap_to_probs
+
+    # Get probabilities for all fixtures
+    p_home, p_draw, p_away = vectorized_gap_to_probs(gaps)
+
+    # Stack probabilities: shape (n_fixtures, 3)
+    probs = np.stack([p_away, p_draw, p_home], axis=1)
+    cum_probs = np.cumsum(probs, axis=1)
+
+    # Generate random values for all fixtures × all simulations
+    random_vals = rng.random((n_simulations, n_fixtures))
+
+    # Determine outcomes: 0=away win, 1=draw, 2=home win
+    outcomes = np.zeros((n_simulations, n_fixtures), dtype=np.int32)
+    outcomes[random_vals > cum_probs[:, 0]] = 1  # At least draw
+    outcomes[random_vals > cum_probs[:, 1]] = 2  # Home win
+
+    # Calculate points earned per fixture
+    home_points = np.where(outcomes == 2, 3, np.where(outcomes == 1, 1, 0))
+    away_points = np.where(outcomes == 0, 3, np.where(outcomes == 1, 1, 0))
+
+    # Initialize points array with current points
+    sim_points = np.zeros((n_simulations, n_teams), dtype=np.int32)
+    for team, pts in current_points.items():
+        if team in team_to_idx:
+            sim_points[:, team_to_idx[team]] = pts
+
+    # Accumulate points from each fixture
+    for fix_idx in range(n_fixtures):
+        h_idx = home_idx[fix_idx]
+        a_idx = away_idx[fix_idx]
+        sim_points[:, h_idx] += home_points[:, fix_idx]
+        sim_points[:, a_idx] += away_points[:, fix_idx]
+
+    # Calculate positions for each simulation
+    sorted_indices = np.argsort(-sim_points, axis=1)
+    positions = np.zeros_like(sim_points)
+    for sim in range(n_simulations):
+        positions[sim, sorted_indices[sim]] = np.arange(1, n_teams + 1)
+
+    # Calculate rivalry probabilities
+    rivalry_results = []
+    for t1, t2, name in valid_rivalries:
+        idx1 = team_to_idx[t1]
+        idx2 = team_to_idx[t2]
+
+        pos1 = positions[:, idx1]
+        pos2 = positions[:, idx2]
+
+        t1_higher = float(np.mean(pos1 < pos2)) * 100
+        t2_higher = float(np.mean(pos2 < pos1)) * 100
+        same = float(np.mean(pos1 == pos2)) * 100
+
+        # Also get points difference stats
+        pts1 = sim_points[:, idx1]
+        pts2 = sim_points[:, idx2]
+        avg_pts_diff = float(np.mean(pts1 - pts2))
+
+        rivalry_results.append({
+            "team1": t1,
+            "team2": t2,
+            "rivalry_name": name,
+            "team1_higher": round(t1_higher, 2),
+            "team2_higher": round(t2_higher, 2),
+            "same_position": round(same, 2),
+            "team1_current_points": current_points[t1],
+            "team2_current_points": current_points[t2],
+            "avg_points_difference": round(avg_pts_diff, 1),
+        })
+
+    return {
+        "week": current_week,
+        "simulations": n_simulations,
+        "rivalries": rivalry_results,
+    }
+
+
 @app.get("/irt/simulation/history")
 async def get_simulation_history(team: Optional[str] = None):
     """

@@ -10,6 +10,7 @@ import {
   Settings,
   RefreshCw,
   BarChart3,
+  Skull,
 } from 'lucide-react';
 
 import Dashboard from './pages/Dashboard';
@@ -19,6 +20,7 @@ import Predictions from './pages/Predictions';
 import SeasonOutcomes from './pages/SeasonOutcomes';
 import Counterfactual from './pages/Counterfactual';
 import Analytics from './pages/Analytics';
+import FunStats from './pages/FunStats';
 
 function App() {
   return (
@@ -45,7 +47,7 @@ function App() {
                 <NavItem to="/standings" icon={Trophy} label="Standings" />
                 <NavItem to="/predictions" icon={Calendar} label="Predictions" />
                 <NavItem to="/outcomes" icon={TrendingUp} label="Outcomes" />
-                <NavItem to="/analytics" icon={BarChart3} label="Analytics" />
+                <NavItem to="/fun-stats" icon={Skull} label="Fun Stats" />
                 <NavItem to="/counterfactual" icon={Sparkles} label="What If?" />
               </nav>
 
@@ -77,6 +79,7 @@ function App() {
             <Route path="/predictions" element={<Predictions />} />
             <Route path="/outcomes" element={<SeasonOutcomes />} />
             <Route path="/analytics" element={<Analytics />} />
+            <Route path="/fun-stats" element={<FunStats />} />
             <Route path="/counterfactual" element={<Counterfactual />} />
           </Routes>
         </main>
