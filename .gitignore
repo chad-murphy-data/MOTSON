@@ -49,3 +49,4 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+tmpclaude-*
