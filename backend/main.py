@@ -23,6 +23,9 @@ import pandas as pd
 from .config import app_config, model_config, ANALYST_ADJUSTMENTS, EPL_TEAMS_2025_26
 from .models.team_state import TeamState, SeasonPrediction
 from .models.bayesian_engine import BayesianEngine, predict_match, initialize_team_states
+from .models.irt_state import IRTTeamState
+from .models.irt_model import gap_to_probabilities
+from .models.bayesian_blender import BayesianBlender
 from .services.data_fetcher import FootballDataAPI
 from .services.weekly_update import WeeklyUpdatePipeline, load_initial_team_states
 from .services.monte_carlo import MonteCarloSimulator
@@ -773,6 +776,210 @@ async def get_results(matchweek: Optional[int] = None):
     except Exception as e:
         logger.error(f"Failed to fetch results: {e}")
         raise HTTPException(status_code=503, detail=str(e))
+
+
+# ============================================================
+# IRT Model Endpoints (Bayesian IRT with theta, b_home, b_away)
+# ============================================================
+
+
+class IRTTeamStateResponse(BaseModel):
+    """IRT team state response model."""
+    team: str
+    theta: float
+    theta_se: float
+    b_home: float
+    b_home_se: float
+    b_away: float
+    b_away_se: float
+    theta_prior: float
+    theta_season: float
+    theta_season_se: float
+    gravity_weight: float
+    momentum_weight: float
+    matches_played: int
+    expected_points_season: float
+    actual_points_season: int
+    is_promoted: bool
+
+
+class IRTMatchPredictionResponse(BaseModel):
+    """IRT match prediction response model."""
+    home_team: str
+    away_team: str
+    home_win_prob: float
+    draw_prob: float
+    away_win_prob: float
+    gap: float
+    m_home: float
+    m_away: float
+    confidence: float
+
+
+@app.get("/irt/teams")
+async def list_irt_teams():
+    """List all teams with IRT state summary, sorted by theta."""
+    db = get_db()
+    states = db.get_all_irt_team_states()
+
+    if not states:
+        raise HTTPException(status_code=404, detail="No IRT states available - run backfill first")
+
+    # Sort by theta
+    sorted_teams = sorted(states.items(), key=lambda x: -x[1].theta)
+
+    return {
+        "teams": [
+            {
+                "team": state.team,
+                "theta": round(state.theta, 3),
+                "theta_se": round(state.theta_se, 3),
+                "b_home": round(state.b_home, 3),
+                "b_away": round(state.b_away, 3),
+                "gravity_weight": round(state.gravity_weight, 2),
+                "matches_played": state.matches_played,
+                "actual_points": state.actual_points_season,
+            }
+            for _, state in sorted_teams
+        ],
+        "count": len(states),
+    }
+
+
+@app.get("/irt/team/{team_name}")
+async def get_irt_team_detail(team_name: str):
+    """Get detailed IRT state for a specific team."""
+    team_name = team_name.replace("%27", "'")
+
+    db = get_db()
+    state = db.get_irt_team_state(team_name)
+
+    if not state:
+        raise HTTPException(status_code=404, detail=f"Team '{team_name}' not found")
+
+    return state.to_dict()
+
+
+@app.get("/irt/team/{team_name}/history")
+async def get_irt_team_history(team_name: str):
+    """Get IRT state history for a team (week-by-week trajectory)."""
+    team_name = team_name.replace("%27", "'")
+
+    db = get_db()
+    history = db.get_irt_team_history(team_name)
+
+    if not history:
+        raise HTTPException(status_code=404, detail=f"No history for team '{team_name}'")
+
+    return {
+        "team": team_name,
+        "history": history,
+        "weeks": len(history),
+    }
+
+
+@app.get("/irt/history/all")
+async def get_all_irt_history():
+    """Get IRT state history for all teams (for trajectory charts)."""
+    db = get_db()
+    history = db.get_all_irt_teams_history()
+
+    if not history:
+        raise HTTPException(status_code=404, detail="No IRT history available")
+
+    # Organize by week
+    by_week = {}
+    for record in history:
+        week = record["week"]
+        if week not in by_week:
+            by_week[week] = []
+        by_week[week].append(record)
+
+    return {
+        "history": history,
+        "by_week": by_week,
+        "total_records": len(history),
+    }
+
+
+@app.get("/irt/predict/{home_team}/{away_team}")
+async def predict_match_irt(home_team: str, away_team: str):
+    """
+    Predict a match using the IRT model.
+
+    Uses the formula:
+        gap = (theta_home - b_away_opponent) - (theta_away - b_home_opponent)
+
+    Where positive gap favors the home team.
+    """
+    home_team = home_team.replace("%27", "'")
+    away_team = away_team.replace("%27", "'")
+
+    db = get_db()
+    home_state = db.get_irt_team_state(home_team)
+    away_state = db.get_irt_team_state(away_team)
+
+    if not home_state:
+        raise HTTPException(status_code=404, detail=f"Home team '{home_team}' not found")
+    if not away_state:
+        raise HTTPException(status_code=404, detail=f"Away team '{away_team}' not found")
+
+    # Calculate attack margins
+    m_home = home_state.theta - away_state.b_away
+    m_away = away_state.theta - home_state.b_home
+
+    # Gap from home team perspective
+    gap = m_home - m_away
+
+    # Convert to probabilities
+    h_prob, d_prob, a_prob = gap_to_probabilities(gap)
+
+    # Confidence
+    import numpy as np
+    combined_se = np.sqrt(
+        home_state.theta_se**2 + away_state.theta_se**2 +
+        home_state.b_home_se**2 + away_state.b_away_se**2
+    )
+    confidence = max(0.1, 1.0 - combined_se / 1.2)
+
+    return {
+        "home_team": home_team,
+        "away_team": away_team,
+        "home_win_prob": round(h_prob, 3),
+        "draw_prob": round(d_prob, 3),
+        "away_win_prob": round(a_prob, 3),
+        "gap": round(gap, 3),
+        "m_home": round(m_home, 3),
+        "m_away": round(m_away, 3),
+        "home_theta": round(home_state.theta, 3),
+        "away_theta": round(away_state.theta, 3),
+        "home_b_home": round(home_state.b_home, 3),
+        "away_b_away": round(away_state.b_away, 3),
+        "confidence": round(confidence, 2),
+    }
+
+
+@app.get("/irt/rankings")
+async def get_irt_rankings():
+    """Get team rankings by various IRT metrics."""
+    db = get_db()
+    states = db.get_all_irt_team_states()
+
+    if not states:
+        raise HTTPException(status_code=404, detail="No IRT states available")
+
+    teams_list = list(states.values())
+
+    # Sort by different metrics
+    by_theta = sorted(teams_list, key=lambda x: -x.theta)
+    by_b_home = sorted(teams_list, key=lambda x: -x.b_home)
+    by_b_away = sorted(teams_list, key=lambda x: -x.b_away)
+
+    return {
+        "by_theta": [{"rank": i+1, "team": t.team, "theta": round(t.theta, 3)} for i, t in enumerate(by_theta)],
+        "by_b_home": [{"rank": i+1, "team": t.team, "b_home": round(t.b_home, 3)} for i, t in enumerate(by_b_home)],
+        "by_b_away": [{"rank": i+1, "team": t.team, "b_away": round(t.b_away, 3)} for i, t in enumerate(by_b_away)],
+    }
 
 
 # Serve React frontend (in production)

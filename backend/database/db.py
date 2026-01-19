@@ -16,6 +16,7 @@ from pathlib import Path
 import logging
 
 from ..models.team_state import TeamState, MatchResult, Fixture, SeasonPrediction
+from ..models.irt_state import IRTTeamState
 from ..config import app_config
 
 logger = logging.getLogger(__name__)
@@ -161,6 +162,58 @@ class Database:
                 key TEXT PRIMARY KEY,
                 value TEXT,
                 updated_at TEXT
+            )
+        """)
+
+        # IRT Team States (new Bayesian IRT model)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS irt_team_states (
+                team TEXT PRIMARY KEY,
+                theta REAL,
+                theta_se REAL,
+                b_home REAL,
+                b_home_se REAL,
+                b_away REAL,
+                b_away_se REAL,
+                theta_prior REAL,
+                theta_prior_se REAL,
+                b_home_prior REAL,
+                b_home_prior_se REAL,
+                b_away_prior REAL,
+                b_away_prior_se REAL,
+                theta_season REAL,
+                theta_season_se REAL,
+                b_home_season REAL,
+                b_home_season_se REAL,
+                b_away_season REAL,
+                b_away_season_se REAL,
+                gravity_weight REAL,
+                momentum_weight REAL,
+                matches_played INTEGER,
+                expected_points_season REAL,
+                actual_points_season INTEGER,
+                last_updated TEXT,
+                is_promoted INTEGER
+            )
+        """)
+
+        # IRT Team State History (for trajectory visualization)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS irt_team_state_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                team TEXT,
+                week INTEGER,
+                theta REAL,
+                theta_se REAL,
+                b_home REAL,
+                b_away REAL,
+                theta_season REAL,
+                theta_season_se REAL,
+                gravity_weight REAL,
+                expected_points REAL,
+                actual_points INTEGER,
+                timestamp TEXT,
+                UNIQUE(team, week)
             )
         """)
 
@@ -591,6 +644,159 @@ class Database:
         """Get the current matchweek from metadata."""
         week = self.get_metadata("current_week")
         return int(week) if week else 0
+
+    # IRT Team States (new Bayesian IRT model)
+
+    def save_irt_team_state(self, state: IRTTeamState):
+        """Save an IRT team state."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO irt_team_states
+            (team, theta, theta_se, b_home, b_home_se, b_away, b_away_se,
+             theta_prior, theta_prior_se, b_home_prior, b_home_prior_se,
+             b_away_prior, b_away_prior_se, theta_season, theta_season_se,
+             b_home_season, b_home_season_se, b_away_season, b_away_season_se,
+             gravity_weight, momentum_weight, matches_played, expected_points_season,
+             actual_points_season, last_updated, is_promoted)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            state.team,
+            state.theta, state.theta_se,
+            state.b_home, state.b_home_se,
+            state.b_away, state.b_away_se,
+            state.theta_prior, state.theta_prior_se,
+            state.b_home_prior, state.b_home_prior_se,
+            state.b_away_prior, state.b_away_prior_se,
+            state.theta_season, state.theta_season_se,
+            state.b_home_season, state.b_home_season_se,
+            state.b_away_season, state.b_away_season_se,
+            state.gravity_weight, state.momentum_weight,
+            state.matches_played, state.expected_points_season,
+            state.actual_points_season,
+            state.last_updated.isoformat() if state.last_updated else None,
+            1 if state.is_promoted else 0,
+        ))
+
+        conn.commit()
+        conn.close()
+
+    def save_irt_team_states(self, states: Dict[str, IRTTeamState]):
+        """Save multiple IRT team states."""
+        for state in states.values():
+            self.save_irt_team_state(state)
+
+    def get_irt_team_state(self, team: str) -> Optional[IRTTeamState]:
+        """Get an IRT team state."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT * FROM irt_team_states WHERE team = ?", (team,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            return None
+
+        return IRTTeamState(
+            team=row["team"],
+            theta=row["theta"],
+            theta_se=row["theta_se"],
+            b_home=row["b_home"],
+            b_home_se=row["b_home_se"],
+            b_away=row["b_away"],
+            b_away_se=row["b_away_se"],
+            theta_prior=row["theta_prior"],
+            theta_prior_se=row["theta_prior_se"],
+            b_home_prior=row["b_home_prior"],
+            b_home_prior_se=row["b_home_prior_se"],
+            b_away_prior=row["b_away_prior"],
+            b_away_prior_se=row["b_away_prior_se"],
+            theta_season=row["theta_season"],
+            theta_season_se=row["theta_season_se"],
+            b_home_season=row["b_home_season"],
+            b_home_season_se=row["b_home_season_se"],
+            b_away_season=row["b_away_season"],
+            b_away_season_se=row["b_away_season_se"],
+            gravity_weight=row["gravity_weight"],
+            momentum_weight=row["momentum_weight"],
+            matches_played=row["matches_played"],
+            expected_points_season=row["expected_points_season"],
+            actual_points_season=row["actual_points_season"],
+            last_updated=datetime.fromisoformat(row["last_updated"]) if row["last_updated"] else None,
+            is_promoted=bool(row["is_promoted"]),
+        )
+
+    def get_all_irt_team_states(self) -> Dict[str, IRTTeamState]:
+        """Get all IRT team states."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT team FROM irt_team_states")
+        teams = [row["team"] for row in cursor.fetchall()]
+        conn.close()
+
+        return {team: self.get_irt_team_state(team) for team in teams}
+
+    def save_irt_team_state_history(self, state: IRTTeamState, week: int):
+        """Save IRT team state snapshot for history tracking."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO irt_team_state_history
+            (team, week, theta, theta_se, b_home, b_away, theta_season, theta_season_se,
+             gravity_weight, expected_points, actual_points, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            state.team,
+            week,
+            state.theta,
+            state.theta_se,
+            state.b_home,
+            state.b_away,
+            state.theta_season,
+            state.theta_season_se,
+            state.gravity_weight,
+            state.expected_points_season,
+            state.actual_points_season,
+            datetime.utcnow().isoformat(),
+        ))
+
+        conn.commit()
+        conn.close()
+
+    def get_irt_team_history(self, team: str) -> List[Dict]:
+        """Get historical IRT state snapshots for a team."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT * FROM irt_team_state_history
+            WHERE team = ?
+            ORDER BY week
+        """, (team,))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [dict(row) for row in rows]
+
+    def get_all_irt_teams_history(self) -> List[Dict]:
+        """Get historical IRT state snapshots for all teams."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT * FROM irt_team_state_history
+            ORDER BY week, team
+        """)
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [dict(row) for row in rows]
 
 
 # Global database instance
