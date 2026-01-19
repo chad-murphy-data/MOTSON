@@ -26,6 +26,7 @@ from .models.bayesian_engine import BayesianEngine, predict_match, initialize_te
 from .models.irt_state import IRTTeamState
 from .models.irt_model import gap_to_probabilities
 from .models.bayesian_blender import BayesianBlender
+from .models.season_simulator import simulate_season, SimulationResult
 from .services.data_fetcher import FootballDataAPI
 from .services.weekly_update import WeeklyUpdatePipeline, load_initial_team_states
 from .services.monte_carlo import MonteCarloSimulator
@@ -979,6 +980,363 @@ async def get_irt_rankings():
         "by_theta": [{"rank": i+1, "team": t.team, "theta": round(t.theta, 3)} for i, t in enumerate(by_theta)],
         "by_b_home": [{"rank": i+1, "team": t.team, "b_home": round(t.b_home, 3)} for i, t in enumerate(by_b_home)],
         "by_b_away": [{"rank": i+1, "team": t.team, "b_away": round(t.b_away, 3)} for i, t in enumerate(by_b_away)],
+    }
+
+
+# ============================================================
+# Season Simulation Endpoints
+# ============================================================
+
+
+class IRTCounterfactualRequest(BaseModel):
+    """Request model for IRT counterfactual simulation."""
+    home_team: str
+    away_team: str
+    result: str  # "H" = home win, "D" = draw, "A" = away win
+
+
+@app.get("/irt/simulation/current")
+async def get_current_simulation():
+    """Get current season simulation results from IRT model."""
+    db = get_db()
+
+    # Get IRT states
+    irt_states = db.get_all_irt_team_states()
+    if not irt_states:
+        raise HTTPException(status_code=404, detail="No IRT states available - run backfill first")
+
+    # Get current week
+    current_week = db.get_current_week()
+
+    # Get fixtures and results
+    fixtures = db.get_fixtures()
+    results = db.get_match_results()
+
+    # Calculate current points
+    current_points = {team: 0 for team in EPL_TEAMS_2025_26}
+    for r in results:
+        if r.matchweek <= current_week:
+            if r.home_goals > r.away_goals:
+                current_points[r.home_team] += 3
+            elif r.home_goals < r.away_goals:
+                current_points[r.away_team] += 3
+            else:
+                current_points[r.home_team] += 1
+                current_points[r.away_team] += 1
+
+    # Get remaining fixtures
+    remaining_fixtures = [
+        {"home_team": f["home_team"], "away_team": f["away_team"], "matchweek": f["matchweek"]}
+        for f in fixtures if f["matchweek"] > current_week
+    ]
+
+    # Run simulation (10k for fast response, high precision)
+    sim_results = simulate_season(
+        team_states=irt_states,
+        remaining_fixtures=remaining_fixtures,
+        current_points=current_points,
+        n_simulations=10000,
+        seed=42
+    )
+
+    # Format response
+    sorted_results = sorted(sim_results.values(), key=lambda x: x.predicted_position)
+
+    return {
+        "week": current_week,
+        "simulations": 10000,
+        "teams": [
+            {
+                "team": r.team,
+                "current_points": r.current_points,
+                "predicted_final_points": round(r.predicted_final_points, 1),
+                "points_5th": round(r.points_5th_percentile, 0),
+                "points_95th": round(r.points_95th_percentile, 0),
+                "predicted_position": round(r.predicted_position, 1),
+                "position_5th": r.position_5th_percentile,
+                "position_95th": r.position_95th_percentile,
+                "p_title": round(r.p_title * 100, 2),
+                "p_top4": round(r.p_top4 * 100, 2),
+                "p_top6": round(r.p_top6 * 100, 2),
+                "p_relegation": round(r.p_relegation * 100, 2),
+            }
+            for r in sorted_results
+        ],
+    }
+
+
+@app.get("/irt/simulation/100m")
+async def get_100m_simulation():
+    """Get the pre-computed 100M simulation results (Opta Troll Edition)."""
+    import json
+    from pathlib import Path
+
+    results_path = Path(__file__).parent.parent / "data" / "100m_simulation_results.json"
+
+    if not results_path.exists():
+        raise HTTPException(status_code=404, detail="100M simulation results not found")
+
+    with open(results_path, 'r') as f:
+        data = json.load(f)
+
+    # Format response with sorted teams
+    sorted_teams = sorted(
+        data["teams"].items(),
+        key=lambda x: x[1].get("expected_position", 20)
+    )
+
+    return {
+        "generated_at": data.get("generated_at"),
+        "total_simulations": data.get("total_simulations"),
+        "week": data.get("week"),
+        "teams": [
+            {
+                "team": team,
+                "p_title": round(stats["p_title"], 5),
+                "p_top4": round(stats["p_top4"], 5),
+                "p_top6": round(stats["p_top6"], 5),
+                "p_top10": round(stats.get("p_top10", 0), 5),
+                "p_relegation": round(stats["p_relegation"], 5),
+                "expected_points": round(stats["expected_points"], 2),
+                "expected_position": round(stats["expected_position"], 2),
+                "current_points": stats.get("current_points", 0),
+                "title_count": stats.get("title_count", 0),
+                "relegation_count": stats.get("relegation_count", 0),
+            }
+            for team, stats in sorted_teams
+        ],
+    }
+
+
+@app.post("/irt/counterfactual")
+async def run_irt_counterfactual(
+    scenarios: List[IRTCounterfactualRequest],
+    n_simulations: int = Query(default=10000, ge=1000, le=100000)
+):
+    """
+    Run an IRT-based counterfactual simulation.
+
+    Example: "What if Wolves beat Arsenal this weekend?"
+
+    Returns season outcome probabilities with and without the specified results.
+    """
+    db = get_db()
+
+    # Get IRT states
+    irt_states = db.get_all_irt_team_states()
+    if not irt_states:
+        raise HTTPException(status_code=404, detail="No IRT states available")
+
+    # Get current week
+    current_week = db.get_current_week()
+
+    # Get fixtures and results
+    fixtures = db.get_fixtures()
+    results = db.get_match_results()
+
+    # Calculate current points
+    current_points = {team: 0 for team in EPL_TEAMS_2025_26}
+    for r in results:
+        if r.matchweek <= current_week:
+            if r.home_goals > r.away_goals:
+                current_points[r.home_team] += 3
+            elif r.home_goals < r.away_goals:
+                current_points[r.away_team] += 3
+            else:
+                current_points[r.home_team] += 1
+                current_points[r.away_team] += 1
+
+    # Get all remaining fixtures
+    remaining_fixtures = [
+        {"home_team": f["home_team"], "away_team": f["away_team"], "matchweek": f["matchweek"]}
+        for f in fixtures if f["matchweek"] > current_week
+    ]
+
+    # Run baseline simulation (without counterfactual)
+    baseline = simulate_season(
+        team_states=irt_states,
+        remaining_fixtures=remaining_fixtures,
+        current_points=current_points.copy(),
+        n_simulations=n_simulations,
+        seed=42
+    )
+
+    # Apply counterfactual scenarios
+    cf_points = current_points.copy()
+    cf_fixtures = []
+    applied_scenarios = []
+
+    for scenario in scenarios:
+        home = scenario.home_team.replace("%27", "'")
+        away = scenario.away_team.replace("%27", "'")
+
+        # Validate teams
+        if home not in irt_states:
+            raise HTTPException(status_code=400, detail=f"Unknown team: {home}")
+        if away not in irt_states:
+            raise HTTPException(status_code=400, detail=f"Unknown team: {away}")
+
+        # Find and remove the fixture from remaining
+        fixture_found = False
+        for f in remaining_fixtures:
+            if f["home_team"] == home and f["away_team"] == away:
+                cf_fixtures.append(f)
+                fixture_found = True
+                break
+
+        if not fixture_found:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Fixture {home} vs {away} not found in remaining fixtures"
+            )
+
+        # Apply result to points
+        result = scenario.result.upper()
+        if result == "H":
+            cf_points[home] += 3
+            applied_scenarios.append(f"{home} beat {away}")
+        elif result == "A":
+            cf_points[away] += 3
+            applied_scenarios.append(f"{away} beat {home} (away)")
+        elif result == "D":
+            cf_points[home] += 1
+            cf_points[away] += 1
+            applied_scenarios.append(f"{home} drew with {away}")
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid result: {result}. Use H, D, or A")
+
+    # Remove applied fixtures from remaining
+    cf_remaining = [
+        f for f in remaining_fixtures
+        if not any(f["home_team"] == cf["home_team"] and f["away_team"] == cf["away_team"]
+                   for cf in cf_fixtures)
+    ]
+
+    # Run counterfactual simulation
+    counterfactual = simulate_season(
+        team_states=irt_states,
+        remaining_fixtures=cf_remaining,
+        current_points=cf_points,
+        n_simulations=n_simulations,
+        seed=42
+    )
+
+    # Calculate deltas for affected teams
+    affected_teams = set()
+    for scenario in scenarios:
+        affected_teams.add(scenario.home_team.replace("%27", "'"))
+        affected_teams.add(scenario.away_team.replace("%27", "'"))
+
+    deltas = []
+    for team in affected_teams:
+        if team in baseline and team in counterfactual:
+            b = baseline[team]
+            c = counterfactual[team]
+            deltas.append({
+                "team": team,
+                "p_title_baseline": round(b.p_title * 100, 3),
+                "p_title_counterfactual": round(c.p_title * 100, 3),
+                "p_title_delta": round((c.p_title - b.p_title) * 100, 3),
+                "p_top4_baseline": round(b.p_top4 * 100, 2),
+                "p_top4_counterfactual": round(c.p_top4 * 100, 2),
+                "p_top4_delta": round((c.p_top4 - b.p_top4) * 100, 2),
+                "p_relegation_baseline": round(b.p_relegation * 100, 3),
+                "p_relegation_counterfactual": round(c.p_relegation * 100, 3),
+                "p_relegation_delta": round((c.p_relegation - b.p_relegation) * 100, 3),
+                "points_baseline": round(b.predicted_final_points, 1),
+                "points_counterfactual": round(c.predicted_final_points, 1),
+                "points_delta": round(c.predicted_final_points - b.predicted_final_points, 1),
+            })
+
+    # Full results for all teams (sorted by predicted position in counterfactual)
+    sorted_cf = sorted(counterfactual.values(), key=lambda x: x.predicted_position)
+
+    return {
+        "scenarios_applied": applied_scenarios,
+        "n_simulations": n_simulations,
+        "week": current_week,
+        "deltas": deltas,
+        "baseline": {
+            team: {
+                "p_title": round(r.p_title * 100, 3),
+                "p_top4": round(r.p_top4 * 100, 2),
+                "p_relegation": round(r.p_relegation * 100, 3),
+                "predicted_points": round(r.predicted_final_points, 1),
+                "predicted_position": round(r.predicted_position, 1),
+            }
+            for team, r in baseline.items()
+        },
+        "counterfactual": {
+            team: {
+                "p_title": round(r.p_title * 100, 3),
+                "p_top4": round(r.p_top4 * 100, 2),
+                "p_relegation": round(r.p_relegation * 100, 3),
+                "predicted_points": round(r.predicted_final_points, 1),
+                "predicted_position": round(r.predicted_position, 1),
+            }
+            for team, r in counterfactual.items()
+        },
+    }
+
+
+@app.get("/irt/simulation/history")
+async def get_simulation_history(team: Optional[str] = None):
+    """
+    Get historical simulation predictions week-by-week.
+
+    If team is specified, returns that team's history.
+    Otherwise returns summary for all teams.
+    """
+    db = get_db()
+
+    if team:
+        team = team.replace("%27", "'")
+        history = db.get_irt_team_history(team)
+
+        if not history:
+            raise HTTPException(status_code=404, detail=f"No history for team '{team}'")
+
+        return {
+            "team": team,
+            "history": [
+                {
+                    "week": h["week"],
+                    "theta": round(h["theta"], 3),
+                    "predicted_points": h.get("predicted_final_points"),
+                    "predicted_position": h.get("predicted_position"),
+                    "p_title": round(h.get("p_title", 0) * 100, 2) if h.get("p_title") else None,
+                    "p_top4": round(h.get("p_top4", 0) * 100, 2) if h.get("p_top4") else None,
+                    "p_relegation": round(h.get("p_relegation", 0) * 100, 2) if h.get("p_relegation") else None,
+                }
+                for h in history
+            ],
+        }
+
+    # All teams summary
+    history = db.get_all_irt_teams_history()
+
+    if not history:
+        raise HTTPException(status_code=404, detail="No IRT history available")
+
+    # Group by team
+    by_team = {}
+    for h in history:
+        t = h["team"]
+        if t not in by_team:
+            by_team[t] = []
+        by_team[t].append({
+            "week": h["week"],
+            "theta": round(h["theta"], 3),
+            "predicted_points": h.get("predicted_final_points"),
+            "predicted_position": h.get("predicted_position"),
+            "p_title": round(h.get("p_title", 0) * 100, 2) if h.get("p_title") else None,
+            "p_top4": round(h.get("p_top4", 0) * 100, 2) if h.get("p_top4") else None,
+            "p_relegation": round(h.get("p_relegation", 0) * 100, 2) if h.get("p_relegation") else None,
+        })
+
+    return {
+        "teams": by_team,
+        "weeks": sorted(set(h["week"] for h in history)),
     }
 
 
