@@ -207,7 +207,35 @@ async def get_current_standings():
 
 @app.get("/standings/predicted")
 async def get_predicted_standings():
-    """Get predicted final standings based on Monte Carlo simulation."""
+    """Get predicted final standings based on Monte Carlo simulation.
+
+    Uses 100M simulation data when available for higher precision.
+    """
+    # Try 100M data first
+    sim_100m = _load_100m_data()
+    if sim_100m and sim_100m.get("teams"):
+        teams_data = sim_100m["teams"]
+        predictions = [
+            {
+                "team": team,
+                "title_prob": data["p_title"] / 100,
+                "top4_prob": data["p_top4"] / 100,
+                "top6_prob": data["p_top6"] / 100,
+                "relegation_prob": data["p_relegation"] / 100,
+                "expected_position": data["expected_position"],
+                "expected_points": data["expected_points"],
+                "current_points": data.get("current_points", 0),
+            }
+            for team, data in teams_data.items()
+        ]
+        sorted_preds = sorted(predictions, key=lambda x: x["expected_position"])
+        return {
+            "standings": sorted_preds,
+            "as_of_week": sim_100m.get("week", 0),
+            "source": "100m_simulation",
+        }
+
+    # Fall back to database
     db = get_db()
     predictions = db.get_season_predictions()
 
@@ -220,6 +248,7 @@ async def get_predicted_standings():
     return {
         "standings": sorted_preds,
         "as_of_week": predictions[0]["week"] if predictions else 0,
+        "source": "database",
     }
 
 
