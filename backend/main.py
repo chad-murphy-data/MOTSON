@@ -306,72 +306,90 @@ async def get_team_history(team_name: str):
 @app.get("/predictions/week/{week}")
 async def get_week_predictions(week: int):
     """Get match predictions for a specific week using IRT model."""
-    db = get_db()
+    try:
+        db = get_db()
 
-    # Get fixtures from the database
-    all_fixtures = db.get_fixtures()
-    week_fixtures = [f for f in all_fixtures if f["matchweek"] == week]
+        # Get fixtures from the database
+        all_fixtures = db.get_fixtures()
+        week_fixtures = [f for f in all_fixtures if f["matchweek"] == week]
 
-    # If no fixtures in DB, try the API
-    if not week_fixtures:
-        api = FootballDataAPI()
-        try:
-            api_fixtures = await api.get_all_fixtures()
-            week_fixtures = [
-                {"home_team": f.home_team, "away_team": f.away_team, "matchweek": f.matchweek, "match_id": f.match_id}
-                for f in api_fixtures if f.matchweek == week
-            ]
-        except Exception as e:
-            logger.error(f"Failed to fetch fixtures from API: {e}")
+        # If no fixtures in DB, try the API
+        if not week_fixtures:
+            try:
+                api = FootballDataAPI()
+                api_fixtures = await api.get_all_fixtures()
+                week_fixtures = [
+                    {"home_team": f.home_team, "away_team": f.away_team, "matchweek": f.matchweek, "match_id": f.match_id}
+                    for f in api_fixtures if f.matchweek == week
+                ]
+            except Exception as e:
+                logger.error(f"Failed to fetch fixtures from API: {e}")
 
-    if not week_fixtures:
-        raise HTTPException(status_code=404, detail=f"No fixtures found for week {week}")
+        if not week_fixtures:
+            # Return empty predictions instead of 404 for better UX
+            return {
+                "week": week,
+                "predictions": [],
+                "count": 0,
+                "source": "none",
+                "message": f"No fixtures found for week {week}"
+            }
 
-    # Get IRT states for predictions
-    irt_states = db.get_all_irt_team_states()
-    if not irt_states:
-        raise HTTPException(status_code=500, detail="No IRT states available")
+        # Get IRT states for predictions
+        irt_states = db.get_all_irt_team_states()
+        if not irt_states:
+            logger.error("No IRT states available in database")
+            return {
+                "week": week,
+                "predictions": [],
+                "count": 0,
+                "source": "none",
+                "message": "No IRT states available - run update first"
+            }
 
-    # Generate IRT predictions for all fixtures
-    predictions = []
-    for fixture in week_fixtures:
-        home_team = fixture["home_team"]
-        away_team = fixture["away_team"]
+        # Generate IRT predictions for all fixtures
+        predictions = []
+        for fixture in week_fixtures:
+            home_team = fixture["home_team"]
+            away_team = fixture["away_team"]
 
-        home_state = irt_states.get(home_team)
-        away_state = irt_states.get(away_team)
+            home_state = irt_states.get(home_team)
+            away_state = irt_states.get(away_team)
 
-        if home_state and away_state:
-            # Calculate IRT prediction
-            m_home = home_state.theta - away_state.b_away
-            m_away = away_state.theta - home_state.b_home
-            gap = m_home - m_away
-            h_prob, d_prob, a_prob = gap_to_probabilities(gap)
+            if home_state and away_state:
+                # Calculate IRT prediction
+                m_home = home_state.theta - away_state.b_away
+                m_away = away_state.theta - home_state.b_home
+                gap = m_home - m_away
+                h_prob, d_prob, a_prob = gap_to_probabilities(gap)
 
-            # Calculate confidence from uncertainty
-            avg_sigma = (home_state.sigma + away_state.sigma) / 2
-            confidence = max(0, 1 - avg_sigma)
+                # Calculate confidence from uncertainty
+                avg_sigma = (home_state.sigma + away_state.sigma) / 2
+                confidence = max(0, 1 - avg_sigma)
 
-            predictions.append({
-                "match_id": fixture.get("match_id", f"{week}_{home_team}_{away_team}"),
-                "matchweek": week,
-                "home_team": home_team,
-                "away_team": away_team,
-                "home_win_prob": h_prob,
-                "draw_prob": d_prob,
-                "away_win_prob": a_prob,
-                "confidence": confidence,
-                "delta": gap,
-            })
-        else:
-            logger.warning(f"Missing IRT state for {home_team} or {away_team}")
+                predictions.append({
+                    "match_id": fixture.get("match_id", f"{week}_{home_team}_{away_team}"),
+                    "matchweek": week,
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "home_win_prob": h_prob,
+                    "draw_prob": d_prob,
+                    "away_win_prob": a_prob,
+                    "confidence": confidence,
+                    "delta": gap,
+                })
+            else:
+                logger.warning(f"Missing IRT state for {home_team} or {away_team}")
 
-    return {
-        "week": week,
-        "predictions": predictions,
-        "count": len(predictions),
-        "source": "irt",
-    }
+        return {
+            "week": week,
+            "predictions": predictions,
+            "count": len(predictions),
+            "source": "irt",
+        }
+    except Exception as e:
+        logger.error(f"Error in get_week_predictions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/predictions/next")

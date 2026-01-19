@@ -67,7 +67,7 @@ export default function Analytics() {
 
   const positionsQuery = useQuery({
     queryKey: ['irtDistributions'],
-    queryFn: () => getIRTDistributions(100000),
+    queryFn: () => getIRTDistributions(10000),  // Reduced from 100k to avoid memory issues
   });
 
   const titleRaceQuery = useQuery({
