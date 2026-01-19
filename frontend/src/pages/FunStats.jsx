@@ -26,7 +26,7 @@ import ErrorMessage from '../components/ErrorMessage';
 export default function FunStats() {
   const funStatsQuery = useQuery({
     queryKey: ['funStats'],
-    queryFn: () => getIRTFunStats(100000),
+    queryFn: () => getIRTFunStats(10000),  // Reduced from 100k to save memory on Render
   });
 
   const sim100MQuery = useQuery({
@@ -43,7 +43,7 @@ export default function FunStats() {
   // Get rivalry data
   const rivalriesQuery = useQuery({
     queryKey: ['rivalries'],
-    queryFn: () => getIRTRivalries(100000),
+    queryFn: () => getIRTRivalries(10000),  // Reduced from 100k to save memory on Render
   });
 
   const isLoading = funStatsQuery.isLoading || sim100MQuery.isLoading;
