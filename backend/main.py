@@ -1279,6 +1279,295 @@ async def run_irt_counterfactual(
     }
 
 
+@app.get("/irt/simulation/distributions")
+async def get_points_distributions(n_simulations: int = Query(default=100000, ge=10000, le=1000000)):
+    """
+    Get full points distributions for all teams with interesting thresholds.
+
+    Returns the probability of reaching various point totals:
+    - Arsenal: % chance of 90+ points, 95+ points, 100+ points (record territory)
+    - Wolves: % chance of <20 points (worst ever), <15 points (unprecedented)
+    - All teams: full distribution histograms for visualization
+    """
+    db = get_db()
+
+    # Get IRT states
+    irt_states = db.get_all_irt_team_states()
+    if not irt_states:
+        raise HTTPException(status_code=404, detail="No IRT states available")
+
+    # Get current week
+    current_week = db.get_current_week()
+
+    # Get fixtures and results
+    fixtures = db.get_fixtures()
+    results = db.get_match_results()
+
+    # Calculate current points
+    current_points = {team: 0 for team in EPL_TEAMS_2025_26}
+    for r in results:
+        if r.matchweek <= current_week:
+            if r.home_goals > r.away_goals:
+                current_points[r.home_team] += 3
+            elif r.home_goals < r.away_goals:
+                current_points[r.away_team] += 3
+            else:
+                current_points[r.home_team] += 1
+                current_points[r.away_team] += 1
+
+    # Get remaining fixtures
+    remaining_fixtures = [
+        {"home_team": f["home_team"], "away_team": f["away_team"], "matchweek": f["matchweek"]}
+        for f in fixtures if f["matchweek"] > current_week
+    ]
+
+    # Run simulation with high count for accurate distributions
+    sim_results = simulate_season(
+        team_states=irt_states,
+        remaining_fixtures=remaining_fixtures,
+        current_points=current_points,
+        n_simulations=n_simulations,
+        seed=42
+    )
+
+    # Historical EPL records for context
+    records = {
+        "highest_points_ever": 100,  # Man City 2017-18
+        "centurion_threshold": 100,
+        "record_low_points": 11,  # Derby 2007-08
+        "bad_season_threshold": 25,
+        "excellent_season_threshold": 90,
+        "title_contention_threshold": 85,
+    }
+
+    # Build response with distributions and interesting thresholds
+    teams_data = []
+
+    for team, r in sorted(sim_results.items(), key=lambda x: x[1].predicted_position):
+        # Calculate cumulative probabilities from distribution
+        dist = dict(r.points_distribution)  # {points: probability}
+
+        # Above thresholds (cumulative from threshold up)
+        p_90_plus = sum(p for pts, p in dist.items() if pts >= 90) * 100
+        p_95_plus = sum(p for pts, p in dist.items() if pts >= 95) * 100
+        p_100_plus = sum(p for pts, p in dist.items() if pts >= 100) * 100
+
+        # Below thresholds (cumulative from threshold down)
+        p_under_20 = sum(p for pts, p in dist.items() if pts < 20) * 100
+        p_under_15 = sum(p for pts, p in dist.items() if pts < 15) * 100
+        p_under_11 = sum(p for pts, p in dist.items() if pts < 11) * 100  # Worse than Derby
+
+        # Position distribution
+        pos_dist = dict(r.position_distribution)
+        p_dead_last = pos_dist.get(20, 0) * 100
+
+        teams_data.append({
+            "team": team,
+            "current_points": r.current_points,
+            "predicted_points": round(r.predicted_final_points, 1),
+            "points_std": round(r.predicted_points_std, 1),
+            "points_5th": round(r.points_5th_percentile, 0),
+            "points_95th": round(r.points_95th_percentile, 0),
+            "predicted_position": round(r.predicted_position, 1),
+
+            # Upside thresholds
+            "p_90_plus_points": round(p_90_plus, 4),
+            "p_95_plus_points": round(p_95_plus, 4),
+            "p_centurion": round(p_100_plus, 5),  # Extra precision for rare events
+
+            # Downside thresholds
+            "p_under_20_points": round(p_under_20, 4),
+            "p_under_15_points": round(p_under_15, 4),
+            "p_worse_than_derby": round(p_under_11, 6),  # Very rare event
+
+            # Dead last
+            "p_dead_last": round(p_dead_last, 3),
+
+            # Full distributions for visualization
+            "points_distribution": [
+                {"points": int(pts), "probability": round(prob * 100, 4)}
+                for pts, prob in sorted(r.points_distribution)
+            ],
+            "position_distribution": [
+                {"position": int(pos), "probability": round(prob * 100, 3)}
+                for pos, prob in sorted(r.position_distribution)
+            ],
+        })
+
+    return {
+        "week": current_week,
+        "simulations": n_simulations,
+        "records": records,
+        "teams": teams_data,
+    }
+
+
+@app.get("/irt/simulation/fun-stats")
+async def get_fun_stats(n_simulations: int = Query(default=100000, ge=10000, le=1000000)):
+    """
+    Fun stats for the Opta Troll - extreme scenario probabilities.
+
+    Highlights rare events like:
+    - Teams reaching centurion status (100+ points)
+    - Teams having historically bad seasons
+    - Surprise title/relegation scenarios
+    """
+    db = get_db()
+
+    # Get IRT states
+    irt_states = db.get_all_irt_team_states()
+    if not irt_states:
+        raise HTTPException(status_code=404, detail="No IRT states available")
+
+    # Get current week
+    current_week = db.get_current_week()
+
+    # Get fixtures and results
+    fixtures = db.get_fixtures()
+    results = db.get_match_results()
+
+    # Calculate current points
+    current_points = {team: 0 for team in EPL_TEAMS_2025_26}
+    for r in results:
+        if r.matchweek <= current_week:
+            if r.home_goals > r.away_goals:
+                current_points[r.home_team] += 3
+            elif r.home_goals < r.away_goals:
+                current_points[r.away_team] += 3
+            else:
+                current_points[r.home_team] += 1
+                current_points[r.away_team] += 1
+
+    # Get remaining fixtures
+    remaining_fixtures = [
+        {"home_team": f["home_team"], "away_team": f["away_team"], "matchweek": f["matchweek"]}
+        for f in fixtures if f["matchweek"] > current_week
+    ]
+
+    # Run simulation
+    sim_results = simulate_season(
+        team_states=irt_states,
+        remaining_fixtures=remaining_fixtures,
+        current_points=current_points,
+        n_simulations=n_simulations,
+        seed=42
+    )
+
+    fun_stats = []
+
+    # Centurion watch (100+ points)
+    for team, r in sim_results.items():
+        dist = dict(r.points_distribution)
+        p_100 = sum(p for pts, p in dist.items() if pts >= 100) * 100
+        if p_100 > 0:
+            fun_stats.append({
+                "category": "centurion_watch",
+                "team": team,
+                "description": f"{team} reach 100+ points",
+                "probability": round(p_100, 5),
+                "simulations": int(p_100 * n_simulations / 100),
+            })
+
+    # Worse than Derby (record low 11 points)
+    for team, r in sim_results.items():
+        dist = dict(r.points_distribution)
+        p_under_11 = sum(p for pts, p in dist.items() if pts < 11) * 100
+        if p_under_11 > 0:
+            fun_stats.append({
+                "category": "worse_than_derby",
+                "team": team,
+                "description": f"{team} finish with fewer than 11 points (worse than Derby 07-08)",
+                "probability": round(p_under_11, 6),
+                "simulations": int(p_under_11 * n_simulations / 100),
+            })
+
+    # Under 20 points (historically bad)
+    for team, r in sim_results.items():
+        dist = dict(r.points_distribution)
+        p_under_20 = sum(p for pts, p in dist.items() if pts < 20) * 100
+        if p_under_20 > 1:  # Only show if >1% chance
+            fun_stats.append({
+                "category": "historically_bad",
+                "team": team,
+                "description": f"{team} finish with fewer than 20 points",
+                "probability": round(p_under_20, 3),
+                "simulations": int(p_under_20 * n_simulations / 100),
+            })
+
+    # 90+ point seasons
+    for team, r in sim_results.items():
+        dist = dict(r.points_distribution)
+        p_90 = sum(p for pts, p in dist.items() if pts >= 90) * 100
+        if p_90 > 1:  # Only show if >1% chance
+            fun_stats.append({
+                "category": "excellent_season",
+                "team": team,
+                "description": f"{team} reach 90+ points",
+                "probability": round(p_90, 2),
+                "simulations": int(p_90 * n_simulations / 100),
+            })
+
+    # Surprise titles (teams with <5% pre-season but now >0.1%)
+    top_6_baseline = {"Arsenal", "Liverpool", "Manchester City", "Chelsea", "Manchester Utd", "Tottenham"}
+    for team, r in sim_results.items():
+        if team not in top_6_baseline and r.p_title > 0.001:  # >0.1%
+            fun_stats.append({
+                "category": "surprise_title",
+                "team": team,
+                "description": f"{team} win the Premier League",
+                "probability": round(r.p_title * 100, 3),
+                "simulations": int(r.p_title * n_simulations),
+            })
+
+    # Surprise relegation (top 6 teams with any relegation chance)
+    for team in top_6_baseline:
+        if team in sim_results:
+            r = sim_results[team]
+            if r.p_relegation > 0:
+                fun_stats.append({
+                    "category": "surprise_relegation",
+                    "team": team,
+                    "description": f"{team} get relegated",
+                    "probability": round(r.p_relegation * 100, 5),
+                    "simulations": int(r.p_relegation * n_simulations),
+                })
+
+    # Survival odds for bottom teams
+    for team, r in sim_results.items():
+        if r.p_relegation > 0.5:  # More likely to go down than stay up
+            survival_rate = 1 - r.p_relegation
+            fun_stats.append({
+                "category": "survival_watch",
+                "team": team,
+                "description": f"{team} avoid relegation",
+                "probability": round(survival_rate * 100, 3),
+                "simulations": int(survival_rate * n_simulations),
+            })
+
+    # Sort by probability descending within category
+    fun_stats.sort(key=lambda x: (-x["probability"]))
+
+    return {
+        "week": current_week,
+        "simulations": n_simulations,
+        "stats": fun_stats,
+        "headlines": {
+            "wolves_survival": next(
+                (s for s in fun_stats if s["team"] == "Wolves" and s["category"] == "survival_watch"),
+                None
+            ),
+            "arsenal_centurion": next(
+                (s for s in fun_stats if s["team"] == "Arsenal" and s["category"] == "centurion_watch"),
+                None
+            ),
+            "worst_ever_candidate": next(
+                (s for s in fun_stats if s["category"] == "worse_than_derby"),
+                None
+            ),
+        },
+    }
+
+
 @app.get("/irt/simulation/history")
 async def get_simulation_history(team: Optional[str] = None):
     """
