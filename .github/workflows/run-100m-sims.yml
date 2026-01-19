@@ -2,12 +2,10 @@ name: Run 100M Simulations
 
 on:
   # EPL typically plays:
-  # - Saturday 3pm, 5:30pm (UK) -> runs Sunday 6am UTC
-  # - Sunday 2pm, 4:30pm (UK) -> runs Monday 6am UTC
+  # - Saturday/Sunday matches -> runs Tuesday 6am UTC (catches Monday night too)
   # - Midweek Tue/Wed evenings -> runs Wed/Thu 6am UTC
   schedule:
-    - cron: '0 6 * * 0'   # Sunday 6am UTC (after Saturday matches)
-    - cron: '0 6 * * 1'   # Monday 6am UTC (after Sunday matches)
+    - cron: '0 6 * * 2'   # Tuesday 6am UTC (after Sat/Sun/Mon matches)
     - cron: '0 6 * * 3'   # Wednesday 6am UTC (after Tuesday midweek)
     - cron: '0 6 * * 4'   # Thursday 6am UTC (after Wednesday midweek)
 
