@@ -24,6 +24,16 @@ import ProbabilityBar from '../components/ProbabilityBar';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorMessage from '../components/ErrorMessage';
 
+// Format probability for display - shows more decimal places for small values
+const formatProb = (prob) => {
+  const pct = prob * 100;
+  if (pct >= 10) return pct.toFixed(1);
+  if (pct >= 1) return pct.toFixed(2);
+  if (pct >= 0.01) return pct.toFixed(3);
+  if (pct > 0) return pct.toFixed(4);
+  return '0';
+};
+
 export default function Dashboard() {
   const standingsQuery = useQuery({
     queryKey: ['standings'],
@@ -193,7 +203,7 @@ export default function Dashboard() {
                         width={100}
                       />
                       <span className="text-sm font-semibold text-slate-700 w-12 text-right">
-                        {(team.probability * 100).toFixed(1)}%
+                        {formatProb(team.probability)}%
                       </span>
                     </div>
                   </div>
@@ -246,7 +256,7 @@ export default function Dashboard() {
                         width={100}
                       />
                       <span className="text-sm font-semibold text-slate-700 w-12 text-right">
-                        {(team.probability * 100).toFixed(1)}%
+                        {formatProb(team.probability)}%
                       </span>
                     </div>
                   </div>
@@ -299,7 +309,7 @@ export default function Dashboard() {
                         width={100}
                       />
                       <span className="text-sm font-semibold text-slate-700 w-12 text-right">
-                        {(team.probability * 100).toFixed(1)}%
+                        {formatProb(team.probability)}%
                       </span>
                     </div>
                   </div>

@@ -86,7 +86,7 @@ export default function FunStats() {
         </p>
         {sim100M && (
           <p className="text-xs text-slate-400 mt-1">
-            Based on {sim100M.total_simulations?.toLocaleString()} simulations from Week {sim100M.week}
+            Based on 10,000 supercomputers running 10,000 simulations each (Week {sim100M.week})
           </p>
         )}
       </div>
@@ -119,7 +119,7 @@ export default function FunStats() {
                 </div>
                 {wolves100M && (
                   <div className="text-xs text-amber-600 mt-2 font-medium">
-                    That's {(wolves100M.p_relegation * 100000000 / 100).toLocaleString()} out of 100M simulations
+                    That's {(wolves100M.p_relegation * 100000000 / 100).toLocaleString()} out of 100M parallel universes
                   </div>
                 )}
               </div>
@@ -141,7 +141,7 @@ export default function FunStats() {
                 </div>
                 {wolves100M && (
                   <div className="text-xs text-green-600 mt-2 font-medium">
-                    {((100 - wolves100M.p_relegation) * 1000000 / 100).toLocaleString()} survival timelines
+                    {((100 - wolves100M.p_relegation) * 1000000 / 100).toLocaleString()} survival universes
                   </div>
                 )}
               </div>
@@ -224,7 +224,7 @@ export default function FunStats() {
               Rivalry Watch: Who Finishes Higher?
             </h2>
             <p className="text-sm text-slate-500 mt-1">
-              Head-to-head final position probabilities from 100k simulations
+              Head-to-head final position probabilities from 10,000 supercomputers
             </p>
           </div>
           <div className="card-body">
@@ -460,7 +460,7 @@ export default function FunStats() {
               <div>
                 <h3 className="font-bold text-lg flex items-center">
                   <BarChart3 className="w-5 h-5 mr-2 text-amber-400" />
-                  100,000,000 Simulations
+                  10,000 Supercomputers x 10,000 Simulations
                 </h3>
                 <p className="text-slate-300 text-sm mt-1">
                   The Opta Troll Edition - generated {new Date(sim100M.generated_at).toLocaleDateString()}
@@ -468,9 +468,9 @@ export default function FunStats() {
               </div>
               <div className="text-right">
                 <div className="text-2xl font-bold text-amber-400">
-                  {sim100M.total_simulations?.toLocaleString()}
+                  100M
                 </div>
-                <div className="text-xs text-slate-400">total simulations</div>
+                <div className="text-xs text-slate-400">parallel universes explored</div>
               </div>
             </div>
           </div>
