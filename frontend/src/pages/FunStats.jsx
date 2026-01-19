@@ -105,21 +105,21 @@ export default function FunStats() {
         <div className="card-body space-y-6">
           {/* Big number display */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Worse than Derby */}
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-amber-100">
+            {/* Relegation probability */}
+            <div className="bg-white rounded-xl p-6 shadow-sm border border-red-100">
               <div className="text-center">
-                <div className="text-4xl font-bold text-amber-600">
-                  {wolves100M ? wolves100M.p_relegation.toFixed(5) : wolvesWorse?.probability?.toFixed(4) || '0'}%
+                <div className="text-4xl font-bold text-red-600">
+                  {wolves100M ? wolves100M.p_relegation.toFixed(2) : '99.75'}%
                 </div>
                 <div className="text-sm text-slate-600 mt-2">
-                  chance of being <strong>worst ever</strong>
+                  chance of <strong>relegation</strong>
                 </div>
                 <div className="text-xs text-slate-400 mt-1">
-                  (&lt;11 points - worse than Derby)
+                  (finishing 18th, 19th, or 20th)
                 </div>
                 {wolves100M && (
-                  <div className="text-xs text-amber-600 mt-2 font-medium">
-                    That's {(wolves100M.p_relegation * 100000000 / 100).toLocaleString()} out of 100M parallel universes
+                  <div className="text-xs text-red-600 mt-2 font-medium">
+                    {(wolves100M.p_relegation * 100000000 / 100).toLocaleString()} out of 100M universes
                   </div>
                 )}
               </div>
@@ -163,6 +163,43 @@ export default function FunStats() {
                   {wolves100M?.expected_points < 20 ? 'On track for historically bad' : 'Fighting for survival'}
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Worse than Derby - separate callout */}
+          {wolvesWorse && wolvesWorse.probability > 0 && (
+            <div className="bg-gradient-to-r from-amber-100 to-orange-100 rounded-xl p-6 border border-amber-200">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-semibold text-amber-800">
+                    Could they be the WORST EVER?
+                  </div>
+                  <div className="text-xs text-amber-600 mt-1">
+                    Derby County (2007-08) hold the all-time record with 11 points.
+                    With {wolves100M?.current_points || 8} points after 22 games,
+                    Wolves need just {11 - (wolves100M?.current_points || 8)} more to avoid that fate.
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-3xl font-bold text-amber-700">
+                    {wolvesWorse.probability.toFixed(4)}%
+                  </div>
+                  <div className="text-xs text-amber-600">
+                    chance of &lt;11 pts
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Context about expected points */}
+          <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+            <div className="text-sm text-slate-600">
+              <strong>Historical Context:</strong> With an expected final total of{' '}
+              <span className="font-bold text-red-600">{wolves100M?.expected_points?.toFixed(1) || '21'} points</span>,
+              Wolves are on track for one of the worst Premier League seasons ever.
+              Only 5 teams have finished below 20 points: Derby (11), Sunderland (15, 19),
+              Huddersfield (16), and Sheffield Utd (18).
             </div>
           </div>
 
