@@ -24,7 +24,7 @@ import {
   CheckCircle,
 } from 'lucide-react';
 
-import { getTeamDetail, getTeamHistory, getSeasonProbabilities } from '../api';
+import { getIRTTeamDetail, getIRTTeamHistory, getIRT100MSimulation } from '../api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorMessage from '../components/ErrorMessage';
 import PositionBadge from '../components/PositionBadge';
@@ -34,25 +34,25 @@ export default function TeamDetail() {
   const decodedName = decodeURIComponent(teamName);
 
   const detailQuery = useQuery({
-    queryKey: ['teamDetail', decodedName],
-    queryFn: () => getTeamDetail(decodedName),
+    queryKey: ['irtTeamDetail', decodedName],
+    queryFn: () => getIRTTeamDetail(decodedName),
   });
 
   const historyQuery = useQuery({
-    queryKey: ['teamHistory', decodedName],
-    queryFn: () => getTeamHistory(decodedName),
+    queryKey: ['irtTeamHistory', decodedName],
+    queryFn: () => getIRTTeamHistory(decodedName),
   });
 
   const probsQuery = useQuery({
-    queryKey: ['seasonProbabilities'],
-    queryFn: getSeasonProbabilities,
+    queryKey: ['irt100MSimulation'],
+    queryFn: getIRT100MSimulation,
   });
 
   const team = detailQuery.data;
   const history = historyQuery.data?.history || [];
 
-  // Get this team's season predictions
-  const teamPrediction = probsQuery.data?.predictions?.find(
+  // Get this team's season predictions from 100M simulation
+  const teamPrediction = probsQuery.data?.teams?.find(
     (p) => p.team === decodedName
   );
 
@@ -81,14 +81,14 @@ export default function TeamDetail() {
               </p>
             </div>
             <div className="mt-4 md:mt-0 flex items-center space-x-4">
-              {team?.analyst_adj !== 0 && (
+              <div className="px-3 py-1 bg-primary-50 text-primary-700 text-sm rounded-full">
+                Gravity Weight: {(team?.gravity_weight * 100)?.toFixed(0)}%
+              </div>
+              {team?.is_promoted && (
                 <div className="px-3 py-1 bg-amber-50 text-amber-700 text-sm rounded-full">
-                  Analyst Adj: {team.analyst_adj > 0 ? '+' : ''}{team.analyst_adj?.toFixed(2)}
+                  Promoted
                 </div>
               )}
-              <div className="px-3 py-1 bg-primary-50 text-primary-700 text-sm rounded-full">
-                Stickiness: {(team?.stickiness * 100)?.toFixed(0)}%
-              </div>
             </div>
           </div>
         </div>
@@ -97,29 +97,29 @@ export default function TeamDetail() {
       {/* Stats Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard
-          label="Theta (Home)"
-          value={team?.effective_theta_home?.toFixed(3)}
+          label="Theta"
+          value={team?.theta?.toFixed(3)}
           icon={Target}
-          description="Team strength"
+          description="Team ability"
         />
         <StatCard
-          label="Uncertainty"
-          value={`±${team?.sigma?.toFixed(3)}`}
+          label="Home Difficulty"
+          value={team?.b_home?.toFixed(3)}
           icon={Activity}
-          description="Sigma"
+          description="How hard to beat at home"
         />
         <StatCard
-          label="Gravity"
-          value={team?.gravity_mean?.toFixed(1)}
-          icon={TrendingDown}
-          description="Historical position"
+          label="Away Difficulty"
+          value={team?.b_away?.toFixed(3)}
+          icon={Activity}
+          description="How hard to beat away"
         />
         <StatCard
-          label="Z-Score"
-          value={team?.cumulative_z_score?.toFixed(2)}
-          icon={team?.cumulative_z_score > 0 ? TrendingUp : TrendingDown}
-          description="vs expectations"
-          highlight={Math.abs(team?.cumulative_z_score) > 1}
+          label="Performance"
+          value={`${team?.performance_vs_expected > 0 ? '+' : ''}${team?.performance_vs_expected?.toFixed(1)}`}
+          icon={team?.performance_vs_expected > 0 ? TrendingUp : TrendingDown}
+          description="vs expected points"
+          highlight={Math.abs(team?.performance_vs_expected) > 3}
         />
       </div>
 
@@ -151,7 +151,7 @@ export default function TeamDetail() {
               <CalibrationIndicator
                 actual={team?.actual_points_season}
                 expected={team?.expected_points_season}
-                zScore={team?.cumulative_z_score}
+                diff={team?.performance_vs_expected}
               />
             </div>
           </div>
@@ -198,7 +198,7 @@ export default function TeamDetail() {
                   />
                   <Area
                     type="monotone"
-                    dataKey="theta_home"
+                    dataKey="theta"
                     stroke="#3b82f6"
                     strokeWidth={2}
                     fill="url(#thetaGradient)"
@@ -276,22 +276,22 @@ export default function TeamDetail() {
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <OutcomeCard
                 label="Title"
-                probability={teamPrediction.title_prob}
+                probability={teamPrediction.p_title / 100}
                 color="amber"
               />
               <OutcomeCard
                 label="Top 4"
-                probability={teamPrediction.top4_prob}
+                probability={teamPrediction.p_top4 / 100}
                 color="blue"
               />
               <OutcomeCard
                 label="Top 6"
-                probability={teamPrediction.top6_prob}
+                probability={teamPrediction.p_top6 / 100}
                 color="emerald"
               />
               <OutcomeCard
                 label="Relegation"
-                probability={teamPrediction.relegation_prob}
+                probability={teamPrediction.p_relegation / 100}
                 color="red"
               />
               <div className="bg-slate-50 rounded-lg p-4">
@@ -300,7 +300,7 @@ export default function TeamDetail() {
                   {teamPrediction.expected_position?.toFixed(1)}
                 </div>
                 <div className="text-xs text-slate-400">
-                  ±{teamPrediction.position_std?.toFixed(1)}
+                  ~{teamPrediction.expected_points?.toFixed(0)} pts
                 </div>
               </div>
             </div>
@@ -311,28 +311,26 @@ export default function TeamDetail() {
       {/* Model Explanation */}
       <div className="card bg-slate-50">
         <div className="card-body">
-          <h3 className="font-semibold text-slate-900 mb-2">Understanding This Team</h3>
+          <h3 className="font-semibold text-slate-900 mb-2">Understanding the IRT Model</h3>
           <div className="text-sm text-slate-600 space-y-2">
             <p>
-              <strong>Stickiness ({(team?.stickiness * 100)?.toFixed(0)}%)</strong>:
-              {team?.stickiness > 0.8
-                ? ' This team has been very consistent historically. Their beliefs are hard to move.'
-                : team?.stickiness > 0.5
-                ? ' This team has moderate historical consistency.'
-                : ' This team is volatile - their position varies significantly year to year.'}
+              <strong>Theta ({team?.theta?.toFixed(3)})</strong>:
+              Team ability - how good this team is at winning matches. Higher = stronger team.
+              Blends 5-year historical prior ({team?.theta_prior?.toFixed(3)}) with current season
+              performance ({team?.theta_season?.toFixed(3)}).
             </p>
             <p>
-              <strong>Gravity ({team?.gravity_mean?.toFixed(1)})</strong>:
-              Historically, this team tends to finish around position {team?.gravity_mean?.toFixed(0)}.
-              This creates a "pull" toward that position, especially early in the season.
+              <strong>Home Difficulty ({team?.b_home?.toFixed(3)})</strong>:
+              How hard this team is to beat at home. Higher values mean opponents struggle more here.
             </p>
             <p>
-              <strong>Z-Score ({team?.cumulative_z_score?.toFixed(2)})</strong>:
-              {Math.abs(team?.cumulative_z_score) < 1
-                ? ' This team is performing within expected variance. No theta update triggered.'
-                : team?.cumulative_z_score > 1
-                ? ' This team is systematically over-performing expectations. Theta increased.'
-                : ' This team is systematically under-performing expectations. Theta decreased.'}
+              <strong>Away Difficulty ({team?.b_away?.toFixed(3)})</strong>:
+              How hard this team is to beat away. Higher values mean they're tough on the road.
+            </p>
+            <p>
+              <strong>Gravity Weight ({(team?.gravity_weight * 100)?.toFixed(0)}%)</strong>:
+              How much the 5-year prior influences the current estimate. Early in the season this
+              is higher; as matches are played, current form has more weight.
             </p>
           </div>
         </div>
@@ -354,10 +352,10 @@ function StatCard({ label, value, icon: Icon, description, highlight }) {
   );
 }
 
-function CalibrationIndicator({ actual, expected, zScore }) {
-  const diff = actual - expected;
-  const isOverperforming = diff > 0;
-  const isSignificant = Math.abs(zScore) > 1;
+function CalibrationIndicator({ actual, expected, diff }) {
+  const pointsDiff = diff ?? (actual - expected);
+  const isOverperforming = pointsDiff > 0;
+  const isSignificant = Math.abs(pointsDiff) > 3;
 
   return (
     <div className="flex items-center space-x-2">
@@ -372,7 +370,7 @@ function CalibrationIndicator({ actual, expected, zScore }) {
                 isOverperforming ? 'text-emerald-600' : 'text-red-600'
               }`}
             >
-              {isOverperforming ? '+' : ''}{diff?.toFixed(1)} pts
+              {isOverperforming ? '+' : ''}{pointsDiff?.toFixed(1)} pts
             </div>
             <div className="text-xs text-slate-500">
               {isOverperforming ? 'Over' : 'Under'}-performing
@@ -384,7 +382,7 @@ function CalibrationIndicator({ actual, expected, zScore }) {
           <CheckCircle className="w-6 h-6 text-primary-500" />
           <div>
             <div className="text-lg font-bold text-slate-700">
-              {diff > 0 ? '+' : ''}{diff?.toFixed(1)} pts
+              {pointsDiff > 0 ? '+' : ''}{pointsDiff?.toFixed(1)} pts
             </div>
             <div className="text-xs text-slate-500">Within expectations</div>
           </div>

@@ -1236,26 +1236,34 @@ async def get_100m_simulation():
         key=lambda x: x[1].get("expected_position", 20)
     )
 
+    teams_data = []
+    for team, stats in sorted_teams:
+        # Format position_probs as list [p1, p2, ..., p20] with values as decimals
+        position_probs_dict = stats.get("position_probs", {})
+        position_probs = [
+            position_probs_dict.get(str(i), position_probs_dict.get(i, 0)) / 100
+            for i in range(1, 21)
+        ]
+        teams_data.append({
+            "team": team,
+            "p_title": round(stats["p_title"], 5),
+            "p_top4": round(stats["p_top4"], 5),
+            "p_top6": round(stats["p_top6"], 5),
+            "p_top10": round(stats.get("p_top10", 0), 5),
+            "p_relegation": round(stats["p_relegation"], 5),
+            "expected_points": round(stats["expected_points"], 2),
+            "expected_position": round(stats["expected_position"], 2),
+            "current_points": stats.get("current_points", 0),
+            "title_count": stats.get("title_count", 0),
+            "relegation_count": stats.get("relegation_count", 0),
+            "position_probs": position_probs,
+        })
+
     return {
         "generated_at": data.get("generated_at"),
         "total_simulations": data.get("total_simulations"),
         "week": data.get("week"),
-        "teams": [
-            {
-                "team": team,
-                "p_title": round(stats["p_title"], 5),
-                "p_top4": round(stats["p_top4"], 5),
-                "p_top6": round(stats["p_top6"], 5),
-                "p_top10": round(stats.get("p_top10", 0), 5),
-                "p_relegation": round(stats["p_relegation"], 5),
-                "expected_points": round(stats["expected_points"], 2),
-                "expected_position": round(stats["expected_position"], 2),
-                "current_points": stats.get("current_points", 0),
-                "title_count": stats.get("title_count", 0),
-                "relegation_count": stats.get("relegation_count", 0),
-            }
-            for team, stats in sorted_teams
-        ],
+        "teams": teams_data,
     }
 
 
