@@ -152,7 +152,7 @@ function ActualStandingsTable({ standings }) {
                 </td>
                 <td>
                   <Link
-                    to={`/team/${encodeURIComponent(team.team)}`}
+                    to={`/teams/${encodeURIComponent(team.team)}`}
                     className="font-medium text-slate-900 hover:text-primary-600"
                   >
                     {team.team}
@@ -220,7 +220,7 @@ function PredictedStandingsTable({ standings }) {
                 </td>
                 <td>
                   <Link
-                    to={`/team/${encodeURIComponent(team.team)}`}
+                    to={`/teams/${encodeURIComponent(team.team)}`}
                     className="font-medium text-slate-900 hover:text-primary-600"
                   >
                     {team.team}
@@ -280,7 +280,7 @@ function ComparisonTable({ data }) {
                   </td>
                   <td>
                     <Link
-                      to={`/team/${encodeURIComponent(team.team)}`}
+                      to={`/teams/${encodeURIComponent(team.team)}`}
                       className="font-medium text-slate-900 hover:text-primary-600"
                     >
                       {team.team}

@@ -284,7 +284,7 @@ export default function FunStats() {
                     </div>
                     <div className="flex items-center justify-between mb-3">
                       <Link
-                        to={`/team/${encodeURIComponent(rivalry.team1)}`}
+                        to={`/teams/${encodeURIComponent(rivalry.team1)}`}
                         className={`font-semibold hover:text-primary-600 ${
                           t1Higher > t2Higher ? 'text-slate-900' : 'text-slate-500'
                         }`}
@@ -296,7 +296,7 @@ export default function FunStats() {
                       </Link>
                       <span className="text-slate-400 text-sm">vs</span>
                       <Link
-                        to={`/team/${encodeURIComponent(rivalry.team2)}`}
+                        to={`/teams/${encodeURIComponent(rivalry.team2)}`}
                         className={`font-semibold hover:text-primary-600 text-right ${
                           t2Higher > t1Higher ? 'text-slate-900' : 'text-slate-500'
                         }`}
@@ -360,7 +360,7 @@ export default function FunStats() {
                   {centurionWatch.map(stat => (
                     <div key={stat.team} className="flex justify-between items-center">
                       <Link
-                        to={`/team/${encodeURIComponent(stat.team)}`}
+                        to={`/teams/${encodeURIComponent(stat.team)}`}
                         className="font-medium text-slate-900 hover:text-primary-600"
                       >
                         {stat.team}
@@ -400,7 +400,7 @@ export default function FunStats() {
                 {excellentSeasons.sort((a, b) => b.probability - a.probability).map(stat => (
                   <div key={stat.team} className="flex justify-between items-center">
                     <Link
-                      to={`/team/${encodeURIComponent(stat.team)}`}
+                      to={`/teams/${encodeURIComponent(stat.team)}`}
                       className="font-medium text-slate-900 hover:text-primary-600"
                     >
                       {stat.team}
@@ -434,7 +434,7 @@ export default function FunStats() {
                 {historicallyBad.sort((a, b) => b.probability - a.probability).map(stat => (
                   <div key={stat.team} className="flex justify-between items-center">
                     <Link
-                      to={`/team/${encodeURIComponent(stat.team)}`}
+                      to={`/teams/${encodeURIComponent(stat.team)}`}
                       className="font-medium text-slate-900 hover:text-primary-600"
                     >
                       {stat.team}
@@ -468,7 +468,7 @@ export default function FunStats() {
                 {survivalWatch.sort((a, b) => a.probability - b.probability).map(stat => (
                   <div key={stat.team} className="flex justify-between items-center">
                     <Link
-                      to={`/team/${encodeURIComponent(stat.team)}`}
+                      to={`/teams/${encodeURIComponent(stat.team)}`}
                       className="font-medium text-slate-900 hover:text-primary-600"
                     >
                       {stat.team}

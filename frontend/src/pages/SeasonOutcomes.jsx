@@ -191,7 +191,7 @@ export default function SeasonOutcomes() {
                     <tr key={team.team}>
                       <td>
                         <Link
-                          to={`/team/${encodeURIComponent(team.team)}`}
+                          to={`/teams/${encodeURIComponent(team.team)}`}
                           className="font-medium text-slate-900 hover:text-primary-600"
                         >
                           {team.team}

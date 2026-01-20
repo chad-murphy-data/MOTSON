@@ -76,7 +76,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/standings" element={<Standings />} />
-            <Route path="/team/:teamName" element={<TeamDetail />} />
+            <Route path="/teams/:teamName" element={<TeamDetail />} />
             <Route path="/predictions" element={<Predictions />} />
             <Route path="/outcomes" element={<SeasonOutcomes />} />
             <Route path="/analytics" element={<Analytics />} />

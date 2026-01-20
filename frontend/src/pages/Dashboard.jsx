@@ -190,7 +190,7 @@ export default function Dashboard() {
                         {idx + 1}
                       </span>
                       <Link
-                        to={`/team/${encodeURIComponent(team.team)}`}
+                        to={`/teams/${encodeURIComponent(team.team)}`}
                         className="font-medium text-slate-900 hover:text-primary-600"
                       >
                         {team.team}
@@ -243,7 +243,7 @@ export default function Dashboard() {
                         {idx + 1}
                       </span>
                       <Link
-                        to={`/team/${encodeURIComponent(team.team)}`}
+                        to={`/teams/${encodeURIComponent(team.team)}`}
                         className="font-medium text-slate-900 hover:text-primary-600"
                       >
                         {team.team}
@@ -296,7 +296,7 @@ export default function Dashboard() {
                         {idx + 1}
                       </span>
                       <Link
-                        to={`/team/${encodeURIComponent(team.team)}`}
+                        to={`/teams/${encodeURIComponent(team.team)}`}
                         className="font-medium text-slate-900 hover:text-primary-600"
                       >
                         {team.team}
@@ -381,7 +381,7 @@ function MatchPredictionCard({ match }) {
     <div className="bg-slate-50 rounded-lg p-4">
       <div className="flex justify-between items-center mb-3">
         <Link
-          to={`/team/${encodeURIComponent(match.home_team)}`}
+          to={`/teams/${encodeURIComponent(match.home_team)}`}
           className={`font-medium hover:text-primary-600 ${
             favorite === 'home' ? 'text-slate-900' : 'text-slate-600'
           }`}
@@ -390,7 +390,7 @@ function MatchPredictionCard({ match }) {
         </Link>
         <span className="text-xs text-slate-400">vs</span>
         <Link
-          to={`/team/${encodeURIComponent(match.away_team)}`}
+          to={`/teams/${encodeURIComponent(match.away_team)}`}
           className={`font-medium hover:text-primary-600 ${
             favorite === 'away' ? 'text-slate-900' : 'text-slate-600'
           }`}

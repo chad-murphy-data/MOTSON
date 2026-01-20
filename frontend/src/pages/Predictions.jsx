@@ -205,7 +205,7 @@ function MatchCard({ match, result }) {
         {/* Teams */}
         <div className="flex justify-between items-center mb-4">
           <Link
-            to={`/team/${encodeURIComponent(match.home_team)}`}
+            to={`/teams/${encodeURIComponent(match.home_team)}`}
             className={`font-semibold hover:text-primary-600 ${
               favorite === 'home' ? 'text-slate-900' : 'text-slate-600'
             }`}
@@ -222,7 +222,7 @@ function MatchCard({ match, result }) {
             )}
           </div>
           <Link
-            to={`/team/${encodeURIComponent(match.away_team)}`}
+            to={`/teams/${encodeURIComponent(match.away_team)}`}
             className={`font-semibold hover:text-primary-600 text-right ${
               favorite === 'away' ? 'text-slate-900' : 'text-slate-600'
             }`}
