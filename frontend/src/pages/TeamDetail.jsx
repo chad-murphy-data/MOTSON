@@ -223,7 +223,15 @@ export default function TeamDetail() {
             </p>
           </div>
           <div className="card-body">
-            {teamPrediction?.position_probs ? (
+            {probsQuery.isLoading ? (
+              <div className="h-[250px] flex items-center justify-center text-slate-400">
+                Loading predictions...
+              </div>
+            ) : probsQuery.error ? (
+              <div className="h-[250px] flex items-center justify-center text-red-400">
+                Failed to load predictions
+              </div>
+            ) : teamPrediction?.position_probs ? (
               <ResponsiveContainer width="100%" height={250}>
                 <BarChart
                   data={teamPrediction.position_probs.map((prob, idx) => ({
@@ -258,7 +266,7 @@ export default function TeamDetail() {
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-              <div className="h-250 flex items-center justify-center text-slate-400">
+              <div className="h-[250px] flex items-center justify-center text-slate-400">
                 No prediction data yet
               </div>
             )}
