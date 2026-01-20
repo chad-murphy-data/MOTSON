@@ -9,14 +9,19 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
+  BarChart,
+  Bar,
+  Cell,
+  ReferenceLine,
 } from 'recharts';
-import { TrendingUp, Activity, Grid3X3, Trophy } from 'lucide-react';
+import { TrendingUp, Activity, Grid3X3, Trophy, Scale } from 'lucide-react';
 
 import {
   getHistoricalPoints,
   getHistoricalStrength,
   getHistoricalTitleRace,
   getIRT100MPositions,
+  getIRTTeams,
 } from '../api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorMessage from '../components/ErrorMessage';
@@ -52,7 +57,7 @@ const getTeamColor = (team) => {
 };
 
 export default function Analytics() {
-  const [view, setView] = React.useState('title'); // 'title', 'points', 'strength', 'heatmap'
+  const [view, setView] = React.useState('title'); // 'title', 'points', 'strength', 'heatmap', 'deviation'
   const [selectedTeams, setSelectedTeams] = React.useState([]);
 
   const pointsQuery = useQuery({
@@ -75,14 +80,21 @@ export default function Analytics() {
     queryFn: getHistoricalTitleRace,
   });
 
+  const teamsQuery = useQuery({
+    queryKey: ['irtTeams'],
+    queryFn: getIRTTeams,
+  });
+
   const isLoading = view === 'title' ? titleRaceQuery.isLoading
     : view === 'points' ? pointsQuery.isLoading
     : view === 'strength' ? strengthQuery.isLoading
+    : view === 'deviation' ? teamsQuery.isLoading
     : positionsQuery.isLoading;
 
   const error = view === 'title' ? titleRaceQuery.error
     : view === 'points' ? pointsQuery.error
     : view === 'strength' ? strengthQuery.error
+    : view === 'deviation' ? teamsQuery.error
     : positionsQuery.error;
 
   // Get all available teams
@@ -152,6 +164,13 @@ export default function Analytics() {
           label="Position Heatmap"
           color="red"
         />
+        <ViewButton
+          active={view === 'deviation'}
+          onClick={() => setView('deviation')}
+          icon={Scale}
+          label="Performance vs Expected"
+          color="primary"
+        />
       </div>
 
       {isLoading ? (
@@ -166,6 +185,8 @@ export default function Analytics() {
         </div>
       ) : view === 'heatmap' ? (
         <PositionHeatmap data={positionsQuery.data} />
+      ) : view === 'deviation' ? (
+        <PerformanceDeviationChart data={teamsQuery.data} />
       ) : (
         <>
           {/* Team Selector */}
@@ -235,6 +256,7 @@ export default function Analytics() {
             {view === 'points' && 'Predicted vs Actual Points'}
             {view === 'strength' && 'Team Strength (Theta)'}
             {view === 'heatmap' && 'Position Probability Heatmap'}
+            {view === 'deviation' && 'Performance vs Expected Points'}
           </h3>
           <p className="text-sm text-slate-600">
             {view === 'title' &&
@@ -245,6 +267,8 @@ export default function Analytics() {
               'Theta represents team strength on a standardized scale. Higher values mean stronger teams. The model updates theta based on cumulative calibration - only when a team systematically over/under-performs, not for individual match surprises.'}
             {view === 'heatmap' &&
               'Each cell shows the probability of a team finishing in that position. Darker red indicates higher probability. Teams are ordered by expected final position.'}
+            {view === 'deviation' &&
+              'Shows how each team is performing relative to what the model expected given their strength (theta). Positive values (green) indicate over-performance - the team has earned more points than expected. Negative values (red) indicate under-performance. Large deviations may suggest luck, injuries, or factors the model hasn\'t captured.'}
           </p>
         </div>
       </div>
@@ -643,6 +667,118 @@ function PositionHeatmap({ data }) {
           <div className="flex items-center gap-2">
             <div className="w-4 h-4 rounded" style={{ backgroundColor: 'rgba(239, 68, 68, 0.9)' }} />
             <span>High probability</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PerformanceDeviationChart({ data }) {
+  if (!data?.teams?.length) {
+    return (
+      <div className="card">
+        <div className="card-body text-center py-8">
+          <p className="text-slate-500">No team data available yet</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Sort teams by performance deviation (most over-performing at top)
+  const sortedTeams = [...data.teams].sort(
+    (a, b) => b.performance_vs_expected - a.performance_vs_expected
+  );
+
+  // Prepare data for the horizontal bar chart
+  const chartData = sortedTeams.map(team => ({
+    team: team.team,
+    deviation: team.performance_vs_expected,
+    actual: team.actual_points,
+    expected: team.expected_points,
+  }));
+
+  // Find the max absolute deviation for symmetric axis
+  const maxDeviation = Math.max(
+    ...chartData.map(d => Math.abs(d.deviation))
+  );
+  const axisLimit = Math.ceil(maxDeviation + 1);
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <h2 className="font-semibold text-slate-900">
+          Performance vs Expected Points
+        </h2>
+        <p className="text-xs text-slate-500 mt-1">
+          Actual points minus expected points based on team strength (theta)
+        </p>
+      </div>
+      <div className="card-body">
+        <ResponsiveContainer width="100%" height={600}>
+          <BarChart
+            data={chartData}
+            layout="vertical"
+            margin={{ top: 10, right: 30, left: 100, bottom: 10 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={true} vertical={false} />
+            <XAxis
+              type="number"
+              domain={[-axisLimit, axisLimit]}
+              tick={{ fontSize: 12, fill: '#64748b' }}
+              axisLine={{ stroke: '#e2e8f0' }}
+              tickFormatter={(value) => `${value > 0 ? '+' : ''}${value}`}
+            />
+            <YAxis
+              type="category"
+              dataKey="team"
+              tick={{ fontSize: 12, fill: '#1e293b' }}
+              axisLine={{ stroke: '#e2e8f0' }}
+              width={95}
+            />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: 'white',
+                border: '1px solid #e2e8f0',
+                borderRadius: '8px',
+              }}
+              formatter={(value, name, props) => {
+                const { actual, expected } = props.payload;
+                return [
+                  <div key="tooltip" className="text-sm">
+                    <div className="font-semibold">
+                      {value > 0 ? '+' : ''}{value.toFixed(1)} pts
+                    </div>
+                    <div className="text-slate-500 text-xs mt-1">
+                      Actual: {actual} pts | Expected: {expected.toFixed(1)} pts
+                    </div>
+                  </div>,
+                  ''
+                ];
+              }}
+              labelFormatter={(label) => label}
+            />
+            <ReferenceLine x={0} stroke="#94a3b8" strokeWidth={2} />
+            <Bar dataKey="deviation" radius={[0, 4, 4, 0]}>
+              {chartData.map((entry, index) => (
+                <Cell
+                  key={`cell-${index}`}
+                  fill={entry.deviation >= 0 ? '#10b981' : '#ef4444'}
+                />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+
+        {/* Legend */}
+        <div className="mt-4 flex items-center justify-center gap-6 text-sm text-slate-600">
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 rounded" style={{ backgroundColor: '#10b981' }} />
+            <span>Over-performing</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 rounded" style={{ backgroundColor: '#ef4444' }} />
+            <span>Under-performing</span>
           </div>
         </div>
       </div>

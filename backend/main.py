@@ -991,6 +991,8 @@ async def list_irt_teams():
                 "gravity_weight": round(state.gravity_weight, 2),
                 "matches_played": state.matches_played,
                 "actual_points": state.actual_points_season,
+                "expected_points": round(state.expected_points_season, 1),
+                "performance_vs_expected": round(state.performance_vs_expected, 1),
             }
             for _, state in sorted_teams
         ],
