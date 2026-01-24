@@ -40,6 +40,9 @@ Thumbs.db
 *.log
 logs/
 
+# Evaluation cache (generated data)
+data/evaluation_cache/
+
 # Test
 .coverage
 htmlcov/
