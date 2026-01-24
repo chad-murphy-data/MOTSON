@@ -169,22 +169,27 @@ jobs:
               exit(0)
 
           html = raw_file.read_text(errors='replace')
+          print(f"HTML size: {len(html)} bytes")
 
           # Team name normalization
           TEAM_MAP = {
               "Man United": "Manchester Utd",
               "Man City": "Manchester City",
+              "Manchester United": "Manchester Utd",
               "Newcastle": "Newcastle Utd",
+              "Newcastle United": "Newcastle Utd",
               "Nott'm Forest": "Nott'ham Forest",
               "Nottingham Forest": "Nott'ham Forest",
               "Spurs": "Tottenham",
-              "Manchester United": "Manchester Utd",
-              "Newcastle United": "Newcastle Utd",
               "Tottenham Hotspur": "Tottenham",
               "West Ham United": "West Ham",
               "Brighton & Hove Albion": "Brighton",
+              "Brighton and Hove Albion": "Brighton",
               "AFC Bournemouth": "Bournemouth",
               "Wolverhampton Wanderers": "Wolves",
+              "Wolverhampton": "Wolves",
+              "Leicester City": "Leicester",
+              "Ipswich Town": "Ipswich",
           }
 
           def normalize(name):
@@ -193,58 +198,111 @@ jobs:
 
           predictions = {}
 
-          # Try multiple patterns to extract predictions
-          # Pattern 1: JSON embedded in the page
-          json_pattern = r'"predictions?":\s*\[(.*?)\]'
-          matches = re.findall(json_pattern, html, re.DOTALL)
+          # Strategy 1: Look for Next.js/React JSON data in script tags
+          script_patterns = [
+              r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+              r'<script[^>]*type="application/json"[^>]*>(.*?)</script>',
+              r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\});',
+              r'window\.__DATA__\s*=\s*(\{.*?\});',
+          ]
 
-          # Pattern 2: Table rows with percentages
-          table_pattern = r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:vs?\.?|v)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)[^0-9]*?(\d+\.?\d*)\s*%?\s*[-–/|]\s*(\d+\.?\d*)\s*%?\s*[-–/|]\s*(\d+\.?\d*)\s*%?'
-          table_matches = re.findall(table_pattern, html)
+          for pattern in script_patterns:
+              matches = re.findall(pattern, html, re.DOTALL)
+              for match in matches:
+                  try:
+                      data = json.loads(match)
+                      # Recursively search for match predictions
+                      def find_predictions(obj, depth=0):
+                          if depth > 10:
+                              return
+                          if isinstance(obj, dict):
+                              # Look for match/prediction data
+                              if 'homeTeam' in obj and 'awayTeam' in obj:
+                                  home = obj.get('homeTeam', {})
+                                  away = obj.get('awayTeam', {})
+                                  home_name = home.get('name', home) if isinstance(home, dict) else str(home)
+                                  away_name = away.get('name', away) if isinstance(away, dict) else str(away)
 
-          for match in table_matches:
-              try:
-                  home_team = normalize(match[0])
-                  away_team = normalize(match[1])
-                  home_prob = float(match[2])
-                  draw_prob = float(match[3])
-                  away_prob = float(match[4])
-
-                  # Convert percentages if needed
-                  if home_prob > 1 or draw_prob > 1 or away_prob > 1:
-                      home_prob /= 100
-                      draw_prob /= 100
-                      away_prob /= 100
-
-                  total = home_prob + draw_prob + away_prob
-                  if total < 0.9 or total > 1.1:
+                                  probs = obj.get('probabilities', obj.get('prediction', {}))
+                                  if isinstance(probs, dict):
+                                      h = probs.get('home', probs.get('homeWin', 0))
+                                      d = probs.get('draw', 0)
+                                      a = probs.get('away', probs.get('awayWin', 0))
+                                      if h and d and a:
+                                          key = f"{normalize(home_name)}|{normalize(away_name)}"
+                                          h, d, a = float(h), float(d), float(a)
+                                          if h > 1: h, d, a = h/100, d/100, a/100
+                                          total = h + d + a
+                                          if 0.9 < total < 1.1:
+                                              predictions[key] = {
+                                                  "home_team": normalize(home_name),
+                                                  "away_team": normalize(away_name),
+                                                  "home_win_prob": h/total,
+                                                  "draw_prob": d/total,
+                                                  "away_win_prob": a/total,
+                                                  "source": "opta",
+                                                  "matchweek": 0,
+                                                  "match_id": ""
+                                              }
+                              for v in obj.values():
+                                  find_predictions(v, depth+1)
+                          elif isinstance(obj, list):
+                              for item in obj:
+                                  find_predictions(item, depth+1)
+                      find_predictions(data)
+                  except (json.JSONDecodeError, TypeError, ValueError):
                       continue
 
-                  # Normalize
-                  home_prob /= total
-                  draw_prob /= total
-                  away_prob /= total
+          # Strategy 2: Look for structured percentage data in HTML
+          # Pattern: "Team A 45% - 25% - 30% Team B" or similar
+          pct_patterns = [
+              # "Arsenal 55% 20% 25% Liverpool"
+              r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(\d+)\s*%\s+(\d+)\s*%\s+(\d+)\s*%\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)',
+              # "Arsenal vs Liverpool: 55% - 20% - 25%"
+              r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:vs?\.?|v)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)[:\s]+(\d+)\s*%?\s*[-–]\s*(\d+)\s*%?\s*[-–]\s*(\d+)',
+          ]
 
-                  key = f"{home_team}|{away_team}"
-                  predictions[key] = {
-                      "home_team": home_team,
-                      "away_team": away_team,
-                      "home_win_prob": home_prob,
-                      "draw_prob": draw_prob,
-                      "away_win_prob": away_prob,
-                      "source": "opta",
-                      "matchweek": 0,
-                      "match_id": ""
-                  }
-              except (ValueError, IndexError):
-                  continue
+          for pattern in pct_patterns:
+              matches = re.findall(pattern, html, re.IGNORECASE)
+              for match in matches:
+                  try:
+                      if len(match) == 5:
+                          home_team = normalize(match[0])
+                          h_pct = float(match[1])
+                          d_pct = float(match[2])
+                          a_pct = float(match[3])
+                          away_team = normalize(match[4])
+                      else:
+                          continue
+
+                      if h_pct > 1: h_pct, d_pct, a_pct = h_pct/100, d_pct/100, a_pct/100
+                      total = h_pct + d_pct + a_pct
+                      if total < 0.9 or total > 1.1:
+                          continue
+
+                      key = f"{home_team}|{away_team}"
+                      if key not in predictions:
+                          predictions[key] = {
+                              "home_team": home_team,
+                              "away_team": away_team,
+                              "home_win_prob": h_pct/total,
+                              "draw_prob": d_pct/total,
+                              "away_win_prob": a_pct/total,
+                              "source": "opta",
+                              "matchweek": 0,
+                              "match_id": ""
+                          }
+                  except (ValueError, IndexError):
+                      continue
 
           if predictions:
               with open(output_file, 'w') as f:
                   json.dump(predictions, f, indent=2)
               print(f"Extracted {len(predictions)} Opta predictions")
           else:
-              print("No predictions could be extracted from the page")
+              # Save a sample of HTML for debugging
+              sample = html[:5000] if len(html) > 5000 else html
+              print(f"No predictions could be extracted. HTML sample:\n{sample[:1000]}...")
           PYEOF
 
           # Check if we got predictions
