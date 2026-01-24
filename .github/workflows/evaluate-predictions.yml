@@ -21,7 +21,7 @@ on:
       include_opta:
         description: 'Attempt to fetch Opta predictions (may fail)'
         required: false
-        default: 'false'
+        default: 'true'
         type: boolean
 
 permissions:
@@ -114,6 +114,150 @@ jobs:
           if [ -f "$OUTPUT" ]; then
             ROW_COUNT=$(tail -n +2 "$OUTPUT" | wc -l)
             echo "Downloaded $ROW_COUNT matches"
+          fi
+
+      - name: Fetch Opta predictions
+        id: opta_fetch
+        continue-on-error: true
+        if: github.event.inputs.include_opta != 'false'
+        run: |
+          echo "Attempting to fetch Opta predictions from The Analyst..."
+
+          # The Analyst predictions page
+          OPTA_URL="https://theanalyst.com/articles/premier-league-match-predictions"
+          RAW_FILE="data/evaluation_cache/opta_raw.html"
+          OUTPUT_FILE="data/evaluation_cache/opta_predictions.json"
+
+          # Fetch the page with retries
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+          SUCCESS=false
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" = "false" ]; do
+            HTTP_CODE=$(curl -sSL -o "$RAW_FILE" -w "%{http_code}" \
+              -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+              -H "Accept: text/html,application/xhtml+xml" \
+              "$OPTA_URL" 2>/dev/null)
+
+            if [ "$HTTP_CODE" = "200" ] && [ -s "$RAW_FILE" ]; then
+              SUCCESS=true
+              echo "Successfully fetched Opta predictions page"
+            else
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              echo "Attempt $RETRY_COUNT failed (HTTP $HTTP_CODE), retrying..."
+              sleep 3
+            fi
+          done
+
+          if [ "$SUCCESS" = "false" ]; then
+            echo "Failed to fetch Opta predictions after $MAX_RETRIES attempts"
+            echo "opta_success=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Parse the HTML to extract predictions
+          python3 << 'PYEOF'
+          import json
+          import re
+          from pathlib import Path
+
+          raw_file = Path("data/evaluation_cache/opta_raw.html")
+          output_file = Path("data/evaluation_cache/opta_predictions.json")
+
+          if not raw_file.exists():
+              print("No raw HTML file found")
+              exit(0)
+
+          html = raw_file.read_text(errors='replace')
+
+          # Team name normalization
+          TEAM_MAP = {
+              "Man United": "Manchester Utd",
+              "Man City": "Manchester City",
+              "Newcastle": "Newcastle Utd",
+              "Nott'm Forest": "Nott'ham Forest",
+              "Nottingham Forest": "Nott'ham Forest",
+              "Spurs": "Tottenham",
+              "Manchester United": "Manchester Utd",
+              "Newcastle United": "Newcastle Utd",
+              "Tottenham Hotspur": "Tottenham",
+              "West Ham United": "West Ham",
+              "Brighton & Hove Albion": "Brighton",
+              "AFC Bournemouth": "Bournemouth",
+              "Wolverhampton Wanderers": "Wolves",
+          }
+
+          def normalize(name):
+              name = name.strip()
+              return TEAM_MAP.get(name, name)
+
+          predictions = {}
+
+          # Try multiple patterns to extract predictions
+          # Pattern 1: JSON embedded in the page
+          json_pattern = r'"predictions?":\s*\[(.*?)\]'
+          matches = re.findall(json_pattern, html, re.DOTALL)
+
+          # Pattern 2: Table rows with percentages
+          table_pattern = r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:vs?\.?|v)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)[^0-9]*?(\d+\.?\d*)\s*%?\s*[-–/|]\s*(\d+\.?\d*)\s*%?\s*[-–/|]\s*(\d+\.?\d*)\s*%?'
+          table_matches = re.findall(table_pattern, html)
+
+          for match in table_matches:
+              try:
+                  home_team = normalize(match[0])
+                  away_team = normalize(match[1])
+                  home_prob = float(match[2])
+                  draw_prob = float(match[3])
+                  away_prob = float(match[4])
+
+                  # Convert percentages if needed
+                  if home_prob > 1 or draw_prob > 1 or away_prob > 1:
+                      home_prob /= 100
+                      draw_prob /= 100
+                      away_prob /= 100
+
+                  total = home_prob + draw_prob + away_prob
+                  if total < 0.9 or total > 1.1:
+                      continue
+
+                  # Normalize
+                  home_prob /= total
+                  draw_prob /= total
+                  away_prob /= total
+
+                  key = f"{home_team}|{away_team}"
+                  predictions[key] = {
+                      "home_team": home_team,
+                      "away_team": away_team,
+                      "home_win_prob": home_prob,
+                      "draw_prob": draw_prob,
+                      "away_win_prob": away_prob,
+                      "source": "opta",
+                      "matchweek": 0,
+                      "match_id": ""
+                  }
+              except (ValueError, IndexError):
+                  continue
+
+          if predictions:
+              with open(output_file, 'w') as f:
+                  json.dump(predictions, f, indent=2)
+              print(f"Extracted {len(predictions)} Opta predictions")
+          else:
+              print("No predictions could be extracted from the page")
+          PYEOF
+
+          # Check if we got predictions
+          if [ -f "$OUTPUT_FILE" ]; then
+            PRED_COUNT=$(python3 -c "import json; print(len(json.load(open('$OUTPUT_FILE'))))" 2>/dev/null || echo "0")
+            if [ "$PRED_COUNT" -gt "0" ]; then
+              echo "opta_success=true" >> $GITHUB_OUTPUT
+              echo "opta_count=$PRED_COUNT" >> $GITHUB_OUTPUT
+            else
+              echo "opta_success=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "opta_success=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Run evaluation
@@ -300,6 +444,36 @@ jobs:
               print(f"⚠️ **Betting markets outperform MOTSON** by {diff:.4f} Brier Score")
           else:
               print(f"🟰 **MOTSON and betting markets perform similarly** (diff: {abs(diff):.4f})")
+          EOF
+          fi
+
+          # Add betting strategy analysis if available
+          if python3 -c "import json; d=json.load(open('data/evaluation_cache/evaluation_results.json')); exit(0 if 'betting_strategies' in d else 1)" 2>/dev/null; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 💰 Betting Strategy Analysis" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            python3 << 'EOF' >> $GITHUB_STEP_SUMMARY
+          import json
+          with open("data/evaluation_cache/evaluation_results.json") as f:
+              data = json.load(f)
+
+          bs = data.get("betting_strategies", {})
+          strategies = bs.get("strategies", {})
+          best = bs.get("best_strategy", {})
+
+          print("| Strategy | Bets | Win Rate | ROI | Final $ |")
+          print("|----------|------|----------|-----|---------|")
+
+          # Show all strategies sorted by ROI
+          sorted_strategies = sorted(strategies.items(), key=lambda x: -x[1]['roi'])
+          for name, s in sorted_strategies:
+              print(f"| {name} | {s['n_bets']} | {s['win_rate']*100:.1f}% | {s['roi']:+.1f}% | ${s['final_bankroll']:.2f} |")
+
+          print("")
+          if best.get("roi", 0) > 0:
+              print(f"✅ **Best strategy: {best['name']}** with {best['roi']:+.1f}% ROI")
+          else:
+              print(f"⚠️ No profitable strategy found (best: {best.get('name', 'N/A')} at {best.get('roi', 0):.1f}% ROI)")
           EOF
           fi
 
