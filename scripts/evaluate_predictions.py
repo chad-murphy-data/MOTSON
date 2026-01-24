@@ -817,7 +817,8 @@ def calculate_roi(predictions: List[MatchPrediction], results: List[MatchResult]
     """
     Calculate return on investment if betting based on MOTSON predictions.
 
-    Strategy: Bet on outcomes where MOTSON probability > implied odds probability + edge_threshold
+    Strategy: Bet on the outcome with highest edge (if > edge_threshold) per match.
+    Only ONE bet per match to avoid betting on multiple outcomes.
 
     Returns:
         - total_staked: Total amount bet
@@ -842,8 +843,10 @@ def calculate_roi(predictions: List[MatchPrediction], results: List[MatchResult]
         result = results_map[key]
         odds_pred = betting_odds[key]
 
-        # Check each outcome for edge
-        # Use actual bookmaker odds for ROI calculation (includes their margin)
+        # Find the outcome with the best edge (only bet on ONE outcome per match)
+        best_bet = None
+        best_edge = edge_threshold  # Must exceed threshold
+
         for outcome, motson_prob, odds_prob, actual_odds in [
             ('H', pred.home_win_prob, odds_pred.home_win_prob, odds_pred.home_odds),
             ('D', pred.draw_prob, odds_pred.draw_prob, odds_pred.draw_odds),
@@ -854,26 +857,32 @@ def calculate_roi(predictions: List[MatchPrediction], results: List[MatchResult]
                 continue
 
             edge = motson_prob - odds_prob
-            if edge > edge_threshold:
-                # Place bet
-                total_staked += stake
-                n_bets += 1
+            if edge > best_edge:
+                best_edge = edge
+                best_bet = (outcome, motson_prob, odds_prob, actual_odds, edge)
 
-                if result.outcome == outcome:
-                    returns = stake * actual_odds
-                    total_returned += returns
-                    wins += 1
+        # Place single bet on best edge if found
+        if best_bet:
+            outcome, motson_prob, odds_prob, actual_odds, edge = best_bet
 
-                bet_details.append({
-                    'match': f"{pred.home_team} vs {pred.away_team}",
-                    'bet': outcome,
-                    'motson_prob': motson_prob,
-                    'odds_prob': odds_prob,
-                    'actual_odds': actual_odds,
-                    'edge': edge,
-                    'result': result.outcome,
-                    'won': result.outcome == outcome,
-                })
+            total_staked += stake
+            n_bets += 1
+
+            if result.outcome == outcome:
+                returns = stake * actual_odds
+                total_returned += returns
+                wins += 1
+
+            bet_details.append({
+                'match': f"{pred.home_team} vs {pred.away_team}",
+                'bet': outcome,
+                'motson_prob': motson_prob,
+                'odds_prob': odds_prob,
+                'actual_odds': actual_odds,
+                'edge': edge,
+                'result': result.outcome,
+                'won': result.outcome == outcome,
+            })
 
     roi = ((total_returned - total_staked) / total_staked * 100) if total_staked > 0 else 0.0
 
@@ -935,32 +944,41 @@ def calculate_betting_strategies(
             result = results_map[key]
             odds_pred = betting_odds[key]
 
-            # Use actual bookmaker odds for realistic ROI
+            # Find the outcome with the best edge (only bet on ONE outcome per match)
+            best_bet = None
+            best_edge = edge_threshold  # Must exceed threshold
+
             for outcome, motson_prob, odds_prob, actual_odds in [
                 ('H', pred.home_win_prob, odds_pred.home_win_prob, odds_pred.home_odds),
                 ('D', pred.draw_prob, odds_pred.draw_prob, odds_pred.draw_odds),
                 ('A', pred.away_win_prob, odds_pred.away_win_prob, odds_pred.away_odds),
             ]:
-                # Skip if no actual odds available (don't use inflated fair odds)
+                # Skip if no actual odds available
                 if actual_odds <= 1.0:
                     continue
 
                 edge = motson_prob - odds_prob
-                if edge > edge_threshold and bankroll >= stake:
-                    won = result.outcome == outcome
-                    profit = (stake * actual_odds - stake) if won else -stake
-                    bankroll += profit
+                if edge > best_edge:
+                    best_edge = edge
+                    best_bet = (outcome, motson_prob, actual_odds, edge)
 
-                    bets.append({
-                        'match': f"{pred.home_team} vs {pred.away_team}",
-                        'week': pred.matchweek,
-                        'outcome': outcome,
-                        'edge': edge,
-                        'odds': actual_odds,
-                        'won': won,
-                        'profit': profit,
-                        'bankroll': bankroll,
-                    })
+            # Place single bet on best edge if found
+            if best_bet and bankroll >= stake:
+                outcome, motson_prob, actual_odds, edge = best_bet
+                won = result.outcome == outcome
+                profit = (stake * actual_odds - stake) if won else -stake
+                bankroll += profit
+
+                bets.append({
+                    'match': f"{pred.home_team} vs {pred.away_team}",
+                    'week': pred.matchweek,
+                    'outcome': outcome,
+                    'edge': edge,
+                    'odds': actual_odds,
+                    'won': won,
+                    'profit': profit,
+                    'bankroll': bankroll,
+                })
 
             bankroll_history.append(bankroll)
 
@@ -977,7 +995,7 @@ def calculate_betting_strategies(
             'bets': bets,
         }
 
-    # Strategy 2: Kelly Criterion (fractional - 25% Kelly for safety)
+    # Strategy 2: Kelly Criterion (fractional)
     for kelly_fraction in [0.25, 0.5, 1.0]:
         strategy_name = f"kelly_{int(kelly_fraction*100)}pct"
         bankroll = initial_bankroll
@@ -993,7 +1011,10 @@ def calculate_betting_strategies(
             result = results_map[key]
             odds_pred = betting_odds[key]
 
-            # Use actual bookmaker odds for realistic ROI
+            # Find the outcome with the best edge (only bet on ONE outcome per match)
+            best_bet = None
+            best_edge = min_edge  # Must exceed threshold
+
             for outcome, motson_prob, odds_prob, actual_odds in [
                 ('H', pred.home_win_prob, odds_pred.home_win_prob, odds_pred.home_odds),
                 ('D', pred.draw_prob, odds_pred.draw_prob, odds_pred.draw_odds),
@@ -1004,35 +1025,44 @@ def calculate_betting_strategies(
                     continue
 
                 edge = motson_prob - odds_prob
-                if edge > min_edge:
-                    # Kelly formula: f* = (bp - q) / b
-                    # where b = decimal_odds - 1, p = our probability, q = 1-p
-                    b = actual_odds - 1
-                    p = motson_prob
-                    q = 1 - p
+                if edge > best_edge:
+                    best_edge = edge
+                    best_bet = (outcome, motson_prob, actual_odds, edge)
 
-                    if b > 0:
-                        kelly_stake = (b * p - q) / b
-                        kelly_stake = max(0, kelly_stake) * kelly_fraction
-                        stake = min(kelly_stake * bankroll, bankroll * 0.25)  # Cap at 25%
+            # Place single bet on best edge if found
+            if best_bet:
+                outcome, motson_prob, actual_odds, edge = best_bet
 
-                        if stake > 0 and bankroll >= stake:
-                            won = result.outcome == outcome
-                            profit = (stake * actual_odds - stake) if won else -stake
-                            bankroll += profit
+                # Kelly formula: f* = (bp - q) / b
+                # where b = decimal_odds - 1, p = our probability, q = 1-p
+                b = actual_odds - 1
+                p = motson_prob
+                q = 1 - p
 
-                            bets.append({
-                                'match': f"{pred.home_team} vs {pred.away_team}",
-                                'week': pred.matchweek,
-                                'outcome': outcome,
-                                'edge': edge,
-                                'kelly_pct': kelly_stake * 100,
-                                'stake': stake,
-                                'odds': actual_odds,
-                                'won': won,
-                                'profit': profit,
-                                'bankroll': bankroll,
-                            })
+                if b > 0:
+                    kelly_stake = (b * p - q) / b
+                    kelly_stake = max(0, kelly_stake) * kelly_fraction
+                    # Cap based on Kelly fraction (more conservative fractions = lower cap)
+                    max_stake_pct = 0.25 * kelly_fraction  # 25% for full Kelly, 12.5% for half, etc.
+                    stake = min(kelly_stake * bankroll, bankroll * max_stake_pct)
+
+                    if stake > 0 and bankroll >= stake:
+                        won = result.outcome == outcome
+                        profit = (stake * actual_odds - stake) if won else -stake
+                        bankroll += profit
+
+                        bets.append({
+                            'match': f"{pred.home_team} vs {pred.away_team}",
+                            'week': pred.matchweek,
+                            'outcome': outcome,
+                            'edge': edge,
+                            'kelly_pct': kelly_stake * 100,
+                            'stake': stake,
+                            'odds': actual_odds,
+                            'won': won,
+                            'profit': profit,
+                            'bankroll': bankroll,
+                        })
 
             bankroll_history.append(bankroll)
 
