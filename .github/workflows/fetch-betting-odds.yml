@@ -1,0 +1,180 @@
+name: Fetch Betting Odds
+
+on:
+  # Run weekly on Monday morning (after weekend matches)
+  schedule:
+    - cron: '0 8 * * 1'  # 8 AM UTC every Monday
+
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      season:
+        description: 'Season year (e.g., 2025 for 2025-26)'
+        required: false
+        default: '2025'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  fetch-odds:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Create cache directory
+        run: mkdir -p data/evaluation_cache
+
+      - name: Determine season
+        id: season
+        run: |
+          if [ -n "${{ github.event.inputs.season }}" ]; then
+            SEASON="${{ github.event.inputs.season }}"
+          else
+            # Default to current season based on date
+            MONTH=$(date +%m)
+            YEAR=$(date +%Y)
+            if [ "$MONTH" -lt 7 ]; then
+              SEASON=$((YEAR - 1))
+            else
+              SEASON=$YEAR
+            fi
+          fi
+          echo "season=$SEASON" >> $GITHUB_OUTPUT
+          echo "Using season: $SEASON"
+
+      - name: Fetch betting odds from football-data.co.uk
+        id: fetch
+        run: |
+          SEASON="${{ steps.season.outputs.season }}"
+          SEASON_CODE="${SEASON: -2}$((${SEASON: -2} + 1))"
+
+          # Handle year wraparound (e.g., 2025 -> 2526)
+          if [ "${SEASON: -2}" = "99" ]; then
+            SEASON_CODE="9900"
+          fi
+
+          URL="https://www.football-data.co.uk/mmz4281/${SEASON_CODE}/E0.csv"
+          OUTPUT="data/evaluation_cache/betting_odds.csv"
+
+          echo "Fetching from: $URL"
+          echo "url=$URL" >> $GITHUB_OUTPUT
+
+          # Fetch with retry logic
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+          SUCCESS=false
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$SUCCESS" = "false" ]; do
+            if curl -sSL -o "$OUTPUT" -w "%{http_code}" "$URL" | grep -q "200"; then
+              SUCCESS=true
+              echo "Successfully downloaded betting odds"
+            else
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              echo "Retry $RETRY_COUNT of $MAX_RETRIES..."
+              sleep 5
+            fi
+          done
+
+          if [ "$SUCCESS" = "true" ]; then
+            # Count rows (excluding header)
+            ROW_COUNT=$(tail -n +2 "$OUTPUT" | wc -l)
+            echo "Downloaded $ROW_COUNT matches"
+            echo "row_count=$ROW_COUNT" >> $GITHUB_OUTPUT
+            echo "success=true" >> $GITHUB_OUTPUT
+          else
+            echo "Failed to download betting odds after $MAX_RETRIES attempts"
+            echo "success=false" >> $GITHUB_OUTPUT
+            echo "row_count=0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate CSV format
+        if: steps.fetch.outputs.success == 'true'
+        run: |
+          echo "Validating CSV format..."
+          python3 << 'EOF'
+          import csv
+          import sys
+
+          required_columns = ['HomeTeam', 'AwayTeam', 'FTR']
+          odds_columns = ['B365H', 'B365D', 'B365A', 'PSH', 'PSD', 'PSA']
+
+          with open('data/evaluation_cache/betting_odds.csv', 'r') as f:
+              reader = csv.DictReader(f)
+              headers = reader.fieldnames
+
+              # Check required columns
+              for col in required_columns:
+                  if col not in headers:
+                      print(f"ERROR: Missing required column: {col}")
+                      sys.exit(1)
+
+              # Check for at least one set of odds
+              has_odds = any(col in headers for col in odds_columns)
+              if not has_odds:
+                  print(f"WARNING: No recognized odds columns found")
+                  print(f"Available columns: {headers}")
+              else:
+                  found = [col for col in odds_columns if col in headers]
+                  print(f"Found odds columns: {found}")
+
+              # Count rows with valid data
+              valid_rows = 0
+              for row in reader:
+                  if row.get('HomeTeam') and row.get('AwayTeam'):
+                      valid_rows += 1
+
+              print(f"Valid data rows: {valid_rows}")
+          EOF
+
+      - name: Check for changes
+        id: changes
+        run: |
+          git add data/evaluation_cache/betting_odds.csv
+          if git diff --staged --quiet; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "No new betting odds data"
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "New betting odds data available"
+          fi
+
+      - name: Commit and push
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git commit -m "Update betting odds data (Week $(date +%V))
+
+          Source: football-data.co.uk
+          Matches: ${{ steps.fetch.outputs.row_count }}
+
+          Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+          git push
+
+      - name: Summary
+        run: |
+          echo "## Betting Odds Fetch Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Source:** ${{ steps.fetch.outputs.url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Season:** ${{ steps.season.outputs.season }}-$((steps.season.outputs.season + 1))" >> $GITHUB_STEP_SUMMARY
+          echo "- **Success:** ${{ steps.fetch.outputs.success }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Matches:** ${{ steps.fetch.outputs.row_count }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Changes committed:** ${{ steps.changes.outputs.has_changes }}" >> $GITHUB_STEP_SUMMARY
