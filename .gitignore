@@ -40,8 +40,9 @@ Thumbs.db
 *.log
 logs/
 
-# Evaluation cache (generated data)
-data/evaluation_cache/
+# Evaluation cache (keep key files, ignore temp/raw data)
+data/evaluation_cache/opta_raw.html
+data/evaluation_cache/*_sample.*
 
 # Test
 .coverage

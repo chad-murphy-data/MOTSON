@@ -1,0 +1,322 @@
+name: Evaluate Predictions
+
+on:
+  # Run after match results are fetched (triggered by fetch-results workflow)
+  workflow_run:
+    workflows: ["Fetch Match Results"]
+    types:
+      - completed
+
+  # Run weekly on Tuesday (after Monday evaluations are complete)
+  schedule:
+    - cron: '0 10 * * 2'  # 10 AM UTC every Tuesday
+
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      week:
+        description: 'Evaluate up to this matchweek (leave empty for all)'
+        required: false
+        type: string
+      include_opta:
+        description: 'Attempt to fetch Opta predictions (may fail)'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Only run if triggered manually OR if the fetch-results workflow succeeded
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Create cache directory
+        run: mkdir -p data/evaluation_cache
+
+      - name: Get current matchweek
+        id: week
+        run: |
+          WEEK=$(python3 -c "
+          import sqlite3
+          conn = sqlite3.connect('data/motson.db')
+          c = conn.cursor()
+          c.execute('SELECT MAX(matchweek) FROM match_results')
+          result = c.fetchone()[0]
+          print(result if result else 0)
+          ")
+          echo "current=$WEEK" >> $GITHUB_OUTPUT
+          echo "Current matchweek: $WEEK"
+
+          # Use input week if provided, otherwise use current
+          if [ -n "${{ github.event.inputs.week }}" ]; then
+            echo "target=${{ github.event.inputs.week }}" >> $GITHUB_OUTPUT
+          else
+            echo "target=$WEEK" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check for betting odds data
+        id: odds_check
+        run: |
+          if [ -f "data/evaluation_cache/betting_odds.csv" ]; then
+            ROW_COUNT=$(tail -n +2 "data/evaluation_cache/betting_odds.csv" | wc -l)
+            echo "Betting odds file found with $ROW_COUNT matches"
+            echo "has_odds=true" >> $GITHUB_OUTPUT
+            echo "odds_count=$ROW_COUNT" >> $GITHUB_OUTPUT
+          else
+            echo "No betting odds file found"
+            echo "has_odds=false" >> $GITHUB_OUTPUT
+            echo "odds_count=0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fetch betting odds if missing
+        if: steps.odds_check.outputs.has_odds == 'false'
+        run: |
+          echo "Attempting to fetch betting odds..."
+          # Determine season
+          MONTH=$(date +%m)
+          YEAR=$(date +%Y)
+          if [ "$MONTH" -lt 7 ]; then
+            SEASON=$((YEAR - 1))
+          else
+            SEASON=$YEAR
+          fi
+          SEASON_CODE="${SEASON: -2}$((${SEASON: -2} + 1))"
+
+          URL="https://www.football-data.co.uk/mmz4281/${SEASON_CODE}/E0.csv"
+          OUTPUT="data/evaluation_cache/betting_odds.csv"
+
+          curl -sSL -o "$OUTPUT" "$URL" || echo "Failed to fetch betting odds"
+
+          if [ -f "$OUTPUT" ]; then
+            ROW_COUNT=$(tail -n +2 "$OUTPUT" | wc -l)
+            echo "Downloaded $ROW_COUNT matches"
+          fi
+
+      - name: Run evaluation
+        id: evaluate
+        run: |
+          ARGS=""
+
+          # Add week argument if specified
+          if [ -n "${{ steps.week.outputs.target }}" ]; then
+            ARGS="$ARGS --week ${{ steps.week.outputs.target }}"
+          fi
+
+          # Add betting CSV if available
+          if [ -f "data/evaluation_cache/betting_odds.csv" ]; then
+            ARGS="$ARGS --betting-csv data/evaluation_cache/betting_odds.csv"
+          fi
+
+          # Add Opta JSON if available
+          if [ -f "data/evaluation_cache/opta_predictions.json" ]; then
+            ARGS="$ARGS --opta-json data/evaluation_cache/opta_predictions.json"
+          fi
+
+          # Output file
+          OUTPUT_FILE="data/evaluation_cache/evaluation_results.json"
+          ARGS="$ARGS --output $OUTPUT_FILE"
+
+          echo "Running: python scripts/evaluate_predictions.py $ARGS"
+          python scripts/evaluate_predictions.py $ARGS | tee evaluation_output.txt
+
+          # Parse results for summary
+          if [ -f "$OUTPUT_FILE" ]; then
+            echo "results_file=$OUTPUT_FILE" >> $GITHUB_OUTPUT
+
+            # Extract key metrics
+            BRIER=$(python3 -c "import json; d=json.load(open('$OUTPUT_FILE')); print(f\"{d['motson']['brier_score']:.4f}\")")
+            LOGLOSS=$(python3 -c "import json; d=json.load(open('$OUTPUT_FILE')); print(f\"{d['motson']['log_loss']:.4f}\")")
+            ACCURACY=$(python3 -c "import json; d=json.load(open('$OUTPUT_FILE')); print(f\"{d['motson']['accuracy']*100:.1f}\")")
+            N_MATCHES=$(python3 -c "import json; d=json.load(open('$OUTPUT_FILE')); print(d['motson']['n_matches'])")
+
+            echo "brier=$BRIER" >> $GITHUB_OUTPUT
+            echo "logloss=$LOGLOSS" >> $GITHUB_OUTPUT
+            echo "accuracy=$ACCURACY" >> $GITHUB_OUTPUT
+            echo "n_matches=$N_MATCHES" >> $GITHUB_OUTPUT
+
+            # Check if betting metrics exist
+            if python3 -c "import json; d=json.load(open('$OUTPUT_FILE')); exit(0 if 'betting' in d else 1)" 2>/dev/null; then
+              BETTING_BRIER=$(python3 -c "import json; d=json.load(open('$OUTPUT_FILE')); print(f\"{d['betting']['brier_score']:.4f}\")")
+              BETTING_ACCURACY=$(python3 -c "import json; d=json.load(open('$OUTPUT_FILE')); print(f\"{d['betting']['accuracy']*100:.1f}\")")
+              echo "betting_brier=$BETTING_BRIER" >> $GITHUB_OUTPUT
+              echo "betting_accuracy=$BETTING_ACCURACY" >> $GITHUB_OUTPUT
+              echo "has_betting=true" >> $GITHUB_OUTPUT
+            else
+              echo "has_betting=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Generate evaluation badge data
+        run: |
+          # Create badge data for README
+          python3 << 'EOF'
+          import json
+          from pathlib import Path
+
+          results_file = Path("data/evaluation_cache/evaluation_results.json")
+          if not results_file.exists():
+              print("No results file found")
+              exit(0)
+
+          with open(results_file) as f:
+              data = json.load(f)
+
+          motson = data.get("motson", {})
+
+          badge_data = {
+              "schemaVersion": 1,
+              "label": "Brier Score",
+              "message": f"{motson.get('brier_score', 0):.3f}",
+              "color": "blue"
+          }
+
+          # Color based on score (lower is better)
+          brier = motson.get('brier_score', 1)
+          if brier < 0.55:
+              badge_data["color"] = "brightgreen"
+          elif brier < 0.60:
+              badge_data["color"] = "green"
+          elif brier < 0.65:
+              badge_data["color"] = "yellowgreen"
+          elif brier < 0.70:
+              badge_data["color"] = "yellow"
+          else:
+              badge_data["color"] = "orange"
+
+          with open("data/evaluation_cache/brier_badge.json", "w") as f:
+              json.dump(badge_data, f)
+
+          # Accuracy badge
+          accuracy_badge = {
+              "schemaVersion": 1,
+              "label": "Accuracy",
+              "message": f"{motson.get('accuracy', 0)*100:.1f}%",
+              "color": "blue"
+          }
+
+          acc = motson.get('accuracy', 0)
+          if acc > 0.55:
+              accuracy_badge["color"] = "brightgreen"
+          elif acc > 0.50:
+              accuracy_badge["color"] = "green"
+          elif acc > 0.45:
+              accuracy_badge["color"] = "yellowgreen"
+          else:
+              accuracy_badge["color"] = "yellow"
+
+          with open("data/evaluation_cache/accuracy_badge.json", "w") as f:
+              json.dump(accuracy_badge, f)
+
+          print(f"Badge data generated: Brier={brier:.3f}, Accuracy={acc*100:.1f}%")
+          EOF
+
+      - name: Check for changes
+        id: changes
+        run: |
+          git add data/evaluation_cache/
+          if git diff --staged --quiet; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit and push
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git commit -m "Update prediction evaluation (Week ${{ steps.week.outputs.target }})
+
+          MOTSON Metrics:
+          - Brier Score: ${{ steps.evaluate.outputs.brier }}
+          - Log Loss: ${{ steps.evaluate.outputs.logloss }}
+          - Accuracy: ${{ steps.evaluate.outputs.accuracy }}%
+          - Matches evaluated: ${{ steps.evaluate.outputs.n_matches }}
+
+          Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+          git push
+
+      - name: Create summary
+        run: |
+          echo "## 📊 MOTSON Prediction Evaluation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Matchweek:** ${{ steps.week.outputs.target }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Matches evaluated:** ${{ steps.evaluate.outputs.n_matches }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### MOTSON Performance" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Brier Score | ${{ steps.evaluate.outputs.brier }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Log Loss | ${{ steps.evaluate.outputs.logloss }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Accuracy | ${{ steps.evaluate.outputs.accuracy }}% |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.evaluate.outputs.has_betting }}" == "true" ]; then
+            echo "### Comparison with Betting Odds" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | MOTSON | Betting |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Brier Score | ${{ steps.evaluate.outputs.brier }} | ${{ steps.evaluate.outputs.betting_brier }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Accuracy | ${{ steps.evaluate.outputs.accuracy }}% | ${{ steps.evaluate.outputs.betting_accuracy }}% |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            # Determine winner
+            python3 << 'EOF' >> $GITHUB_STEP_SUMMARY
+          import json
+          with open("data/evaluation_cache/evaluation_results.json") as f:
+              data = json.load(f)
+          motson_brier = data["motson"]["brier_score"]
+          betting_brier = data.get("betting", {}).get("brier_score", 999)
+          diff = motson_brier - betting_brier
+          if diff < -0.01:
+              print(f"✅ **MOTSON outperforms betting markets** by {abs(diff):.4f} Brier Score")
+          elif diff > 0.01:
+              print(f"⚠️ **Betting markets outperform MOTSON** by {diff:.4f} Brier Score")
+          else:
+              print(f"🟰 **MOTSON and betting markets perform similarly** (diff: {abs(diff):.4f})")
+          EOF
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Interpretation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Brier Score:** Lower is better (0 = perfect, 2 = worst)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Log Loss:** Lower is better (~1.1 is typical for EPL)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Accuracy:** Higher is better (~50% is typical)" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload evaluation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-results
+          path: |
+            data/evaluation_cache/evaluation_results.json
+            data/evaluation_cache/brier_badge.json
+            data/evaluation_cache/accuracy_badge.json
+            evaluation_output.txt
+          retention-days: 90
