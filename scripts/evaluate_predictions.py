@@ -875,6 +875,311 @@ def calculate_roi(predictions: List[MatchPrediction], results: List[MatchResult]
     }
 
 
+def calculate_betting_strategies(
+    predictions: List[MatchPrediction],
+    results: List[MatchResult],
+    betting_odds: Dict[Tuple[str, str], MatchPrediction],
+    initial_bankroll: float = 1000.0,
+) -> Dict:
+    """
+    Analyze multiple betting strategies to determine profitability.
+
+    Strategies tested:
+    1. Value Betting (various edge thresholds: 2%, 5%, 10%, 15%)
+    2. Kelly Criterion (full and fractional)
+    3. Flat betting on favorites
+    4. Flat betting on underdogs
+
+    Returns comprehensive analysis including:
+    - ROI for each strategy
+    - Bankroll progression
+    - Best/worst bets
+    - Profit by matchweek
+    """
+    results_map = {(r.home_team, r.away_team): r for r in results}
+
+    # Sort predictions by matchweek for bankroll tracking
+    sorted_preds = sorted(
+        [p for p in predictions if (p.home_team, p.away_team) in results_map],
+        key=lambda p: p.matchweek
+    )
+
+    strategies = {}
+
+    # Strategy 1: Value Betting at different edge thresholds
+    for edge_threshold in [0.02, 0.05, 0.10, 0.15]:
+        strategy_name = f"value_{int(edge_threshold*100)}pct"
+        bankroll = initial_bankroll
+        bankroll_history = [bankroll]
+        bets = []
+        stake = initial_bankroll * 0.02  # 2% of initial bankroll per bet
+
+        for pred in sorted_preds:
+            key = (pred.home_team, pred.away_team)
+            if key not in betting_odds:
+                continue
+
+            result = results_map[key]
+            odds_pred = betting_odds[key]
+
+            for outcome, motson_prob, odds_prob in [
+                ('H', pred.home_win_prob, odds_pred.home_win_prob),
+                ('D', pred.draw_prob, odds_pred.draw_prob),
+                ('A', pred.away_win_prob, odds_pred.away_win_prob),
+            ]:
+                edge = motson_prob - odds_prob
+                if edge > edge_threshold and bankroll >= stake:
+                    decimal_odds = 1.0 / odds_prob if odds_prob > 0 else 0
+                    won = result.outcome == outcome
+                    profit = (stake * decimal_odds - stake) if won else -stake
+                    bankroll += profit
+
+                    bets.append({
+                        'match': f"{pred.home_team} vs {pred.away_team}",
+                        'week': pred.matchweek,
+                        'outcome': outcome,
+                        'edge': edge,
+                        'odds': decimal_odds,
+                        'won': won,
+                        'profit': profit,
+                        'bankroll': bankroll,
+                    })
+
+            bankroll_history.append(bankroll)
+
+        strategies[strategy_name] = {
+            'final_bankroll': bankroll,
+            'profit': bankroll - initial_bankroll,
+            'roi': ((bankroll - initial_bankroll) / initial_bankroll) * 100,
+            'n_bets': len(bets),
+            'wins': sum(1 for b in bets if b['won']),
+            'win_rate': sum(1 for b in bets if b['won']) / len(bets) if bets else 0,
+            'avg_edge': sum(b['edge'] for b in bets) / len(bets) if bets else 0,
+            'max_drawdown': calculate_max_drawdown(bankroll_history),
+            'bankroll_history': bankroll_history,
+            'bets': bets,
+        }
+
+    # Strategy 2: Kelly Criterion (fractional - 25% Kelly for safety)
+    for kelly_fraction in [0.25, 0.5, 1.0]:
+        strategy_name = f"kelly_{int(kelly_fraction*100)}pct"
+        bankroll = initial_bankroll
+        bankroll_history = [bankroll]
+        bets = []
+        min_edge = 0.05  # Only bet with 5% edge minimum
+
+        for pred in sorted_preds:
+            key = (pred.home_team, pred.away_team)
+            if key not in betting_odds:
+                continue
+
+            result = results_map[key]
+            odds_pred = betting_odds[key]
+
+            for outcome, motson_prob, odds_prob in [
+                ('H', pred.home_win_prob, odds_pred.home_win_prob),
+                ('D', pred.draw_prob, odds_pred.draw_prob),
+                ('A', pred.away_win_prob, odds_pred.away_win_prob),
+            ]:
+                edge = motson_prob - odds_prob
+                if edge > min_edge:
+                    decimal_odds = 1.0 / odds_prob if odds_prob > 0 else 0
+
+                    # Kelly formula: f* = (bp - q) / b
+                    # where b = decimal_odds - 1, p = our probability, q = 1-p
+                    b = decimal_odds - 1
+                    p = motson_prob
+                    q = 1 - p
+
+                    if b > 0:
+                        kelly_stake = (b * p - q) / b
+                        kelly_stake = max(0, kelly_stake) * kelly_fraction
+                        stake = min(kelly_stake * bankroll, bankroll * 0.25)  # Cap at 25%
+
+                        if stake > 0 and bankroll >= stake:
+                            won = result.outcome == outcome
+                            profit = (stake * decimal_odds - stake) if won else -stake
+                            bankroll += profit
+
+                            bets.append({
+                                'match': f"{pred.home_team} vs {pred.away_team}",
+                                'week': pred.matchweek,
+                                'outcome': outcome,
+                                'edge': edge,
+                                'kelly_pct': kelly_stake * 100,
+                                'stake': stake,
+                                'odds': decimal_odds,
+                                'won': won,
+                                'profit': profit,
+                                'bankroll': bankroll,
+                            })
+
+            bankroll_history.append(bankroll)
+
+        strategies[strategy_name] = {
+            'final_bankroll': bankroll,
+            'profit': bankroll - initial_bankroll,
+            'roi': ((bankroll - initial_bankroll) / initial_bankroll) * 100,
+            'n_bets': len(bets),
+            'wins': sum(1 for b in bets if b['won']),
+            'win_rate': sum(1 for b in bets if b['won']) / len(bets) if bets else 0,
+            'avg_stake_pct': sum(b['stake'] for b in bets) / (len(bets) * initial_bankroll) * 100 if bets else 0,
+            'max_drawdown': calculate_max_drawdown(bankroll_history),
+            'bankroll_history': bankroll_history,
+            'bets': bets,
+        }
+
+    # Strategy 3: Bet on MOTSON's predicted winner (flat stake)
+    strategy_name = "predicted_winner"
+    bankroll = initial_bankroll
+    bankroll_history = [bankroll]
+    bets = []
+    stake = initial_bankroll * 0.02
+
+    for pred in sorted_preds:
+        key = (pred.home_team, pred.away_team)
+        if key not in betting_odds or bankroll < stake:
+            continue
+
+        result = results_map[key]
+        odds_pred = betting_odds[key]
+
+        # Find predicted winner
+        if pred.home_win_prob >= pred.draw_prob and pred.home_win_prob >= pred.away_win_prob:
+            predicted = 'H'
+            odds_prob = odds_pred.home_win_prob
+        elif pred.draw_prob >= pred.away_win_prob:
+            predicted = 'D'
+            odds_prob = odds_pred.draw_prob
+        else:
+            predicted = 'A'
+            odds_prob = odds_pred.away_win_prob
+
+        decimal_odds = 1.0 / odds_prob if odds_prob > 0 else 0
+        won = result.outcome == predicted
+        profit = (stake * decimal_odds - stake) if won else -stake
+        bankroll += profit
+
+        bets.append({
+            'match': f"{pred.home_team} vs {pred.away_team}",
+            'week': pred.matchweek,
+            'predicted': predicted,
+            'actual': result.outcome,
+            'odds': decimal_odds,
+            'won': won,
+            'profit': profit,
+            'bankroll': bankroll,
+        })
+
+        bankroll_history.append(bankroll)
+
+    strategies[strategy_name] = {
+        'final_bankroll': bankroll,
+        'profit': bankroll - initial_bankroll,
+        'roi': ((bankroll - initial_bankroll) / initial_bankroll) * 100,
+        'n_bets': len(bets),
+        'wins': sum(1 for b in bets if b['won']),
+        'win_rate': sum(1 for b in bets if b['won']) / len(bets) if bets else 0,
+        'max_drawdown': calculate_max_drawdown(bankroll_history),
+        'bankroll_history': bankroll_history,
+        'bets': bets,
+    }
+
+    # Find best and worst strategies
+    best_strategy = max(strategies.items(), key=lambda x: x[1]['roi'])
+    worst_strategy = min(strategies.items(), key=lambda x: x[1]['roi'])
+
+    # Calculate profit by week for the best value strategy
+    profit_by_week = {}
+    if 'value_5pct' in strategies:
+        for bet in strategies['value_5pct']['bets']:
+            week = bet['week']
+            if week not in profit_by_week:
+                profit_by_week[week] = 0
+            profit_by_week[week] += bet['profit']
+
+    return {
+        'strategies': strategies,
+        'best_strategy': {
+            'name': best_strategy[0],
+            'roi': best_strategy[1]['roi'],
+            'profit': best_strategy[1]['profit'],
+        },
+        'worst_strategy': {
+            'name': worst_strategy[0],
+            'roi': worst_strategy[1]['roi'],
+            'profit': worst_strategy[1]['profit'],
+        },
+        'profit_by_week': profit_by_week,
+        'initial_bankroll': initial_bankroll,
+    }
+
+
+def calculate_max_drawdown(bankroll_history: List[float]) -> float:
+    """Calculate maximum drawdown from peak."""
+    if not bankroll_history:
+        return 0.0
+
+    peak = bankroll_history[0]
+    max_dd = 0.0
+
+    for value in bankroll_history:
+        if value > peak:
+            peak = value
+        drawdown = (peak - value) / peak if peak > 0 else 0
+        max_dd = max(max_dd, drawdown)
+
+    return max_dd * 100  # Return as percentage
+
+
+def print_betting_analysis(betting_analysis: Dict):
+    """Print detailed betting strategy analysis."""
+    print("\n" + "=" * 80)
+    print("BETTING STRATEGY ANALYSIS")
+    print("=" * 80)
+    print(f"Initial Bankroll: ${betting_analysis['initial_bankroll']:.2f}")
+    print()
+
+    # Summary table
+    print("-" * 80)
+    print(f"{'Strategy':<20} {'Bets':>6} {'Wins':>6} {'Win%':>8} {'ROI':>10} {'Final $':>12} {'Max DD':>8}")
+    print("-" * 80)
+
+    for name, data in sorted(betting_analysis['strategies'].items(), key=lambda x: -x[1]['roi']):
+        print(f"{name:<20} {data['n_bets']:>6} {data['wins']:>6} {data['win_rate']*100:>7.1f}% "
+              f"{data['roi']:>+9.1f}% ${data['final_bankroll']:>11.2f} {data['max_drawdown']:>7.1f}%")
+
+    print("-" * 80)
+
+    # Best strategy highlight
+    best = betting_analysis['best_strategy']
+    print(f"\n🏆 BEST STRATEGY: {best['name']}")
+    print(f"   ROI: {best['roi']:+.1f}%")
+    print(f"   Profit: ${best['profit']:+.2f}")
+
+    # Interpretation
+    print("\n" + "-" * 80)
+    print("INTERPRETATION")
+    print("-" * 80)
+
+    if best['roi'] > 0:
+        print(f"✅ MOTSON shows PROFITABLE edge against bookmakers!")
+        print(f"   Using {best['name']} strategy would have grown $1000 to ${1000 + best['profit']/betting_analysis['initial_bankroll']*1000:.2f}")
+    else:
+        print(f"⚠️  No profitable strategy found against bookmaker odds")
+        print(f"   Best result: {best['roi']:.1f}% ROI")
+
+    # Value betting breakdown
+    if 'value_5pct' in betting_analysis['strategies']:
+        v5 = betting_analysis['strategies']['value_5pct']
+        print(f"\n📊 Value Betting (5% edge threshold):")
+        print(f"   - {v5['n_bets']} bets placed")
+        print(f"   - Average edge: {v5.get('avg_edge', 0)*100:.1f}%")
+        print(f"   - Win rate: {v5['win_rate']*100:.1f}%")
+
+    print()
+
+
 def evaluate_source(predictions: Dict[Tuple[str, str], MatchPrediction],
                     results: List[MatchResult],
                     source_name: str) -> EvaluationMetrics:
@@ -992,6 +1297,7 @@ def save_evaluation_results(motson_metrics: EvaluationMetrics,
                            betting_metrics: Optional[EvaluationMetrics],
                            opta_metrics: Optional[EvaluationMetrics],
                            roi_results: Optional[Dict],
+                           betting_analysis: Optional[Dict],
                            output_file: Path):
     """Save evaluation results to JSON file."""
     results = {
@@ -1032,6 +1338,27 @@ def save_evaluation_results(motson_metrics: EvaluationMetrics,
             'total_staked': roi_results['total_staked'],
             'total_returned': roi_results['total_returned'],
             'roi': roi_results['roi'],
+        }
+
+    if betting_analysis:
+        # Save summary of betting strategies (without full bet history to keep file size reasonable)
+        results['betting_strategies'] = {
+            'initial_bankroll': betting_analysis['initial_bankroll'],
+            'best_strategy': betting_analysis['best_strategy'],
+            'worst_strategy': betting_analysis['worst_strategy'],
+            'strategies': {
+                name: {
+                    'final_bankroll': data['final_bankroll'],
+                    'profit': data['profit'],
+                    'roi': data['roi'],
+                    'n_bets': data['n_bets'],
+                    'wins': data['wins'],
+                    'win_rate': data['win_rate'],
+                    'max_drawdown': data['max_drawdown'],
+                }
+                for name, data in betting_analysis['strategies'].items()
+            },
+            'profit_by_week': betting_analysis['profit_by_week'],
         }
 
     with open(output_file, 'w') as f:
@@ -1236,16 +1563,24 @@ def main():
 
     # Calculate ROI
     roi_results = None
+    betting_analysis = None
     if betting_preds:
         roi_results = calculate_roi(list(motson_preds.values()), results, betting_preds)
+        betting_analysis = calculate_betting_strategies(
+            list(motson_preds.values()), results, betting_preds
+        )
 
     # Print report
     print_comparison_report(motson_metrics, betting_metrics, opta_metrics, roi_results)
 
+    # Print detailed betting analysis
+    if betting_analysis:
+        print_betting_analysis(betting_analysis)
+
     # Save results
     output_file = Path(args.output) if args.output else CACHE_DIR / "evaluation_results.json"
     ensure_cache_dir()
-    save_evaluation_results(motson_metrics, betting_metrics, opta_metrics, roi_results, output_file)
+    save_evaluation_results(motson_metrics, betting_metrics, opta_metrics, roi_results, betting_analysis, output_file)
 
 
 if __name__ == "__main__":
