@@ -849,17 +849,18 @@ def calculate_roi(predictions: List[MatchPrediction], results: List[MatchResult]
             ('D', pred.draw_prob, odds_pred.draw_prob, odds_pred.draw_odds),
             ('A', pred.away_win_prob, odds_pred.away_win_prob, odds_pred.away_odds),
         ]:
+            # Skip if no actual odds available
+            if actual_odds <= 1.0:
+                continue
+
             edge = motson_prob - odds_prob
             if edge > edge_threshold:
                 # Place bet
                 total_staked += stake
                 n_bets += 1
 
-                # Use actual bookmaker odds (not fair odds derived from normalized probs)
-                decimal_odds = actual_odds if actual_odds > 0 else (1.0 / odds_prob if odds_prob > 0 else 0)
-
                 if result.outcome == outcome:
-                    returns = stake * decimal_odds
+                    returns = stake * actual_odds
                     total_returned += returns
                     wins += 1
 
@@ -868,7 +869,7 @@ def calculate_roi(predictions: List[MatchPrediction], results: List[MatchResult]
                     'bet': outcome,
                     'motson_prob': motson_prob,
                     'odds_prob': odds_prob,
-                    'actual_odds': decimal_odds,
+                    'actual_odds': actual_odds,
                     'edge': edge,
                     'result': result.outcome,
                     'won': result.outcome == outcome,
@@ -940,12 +941,14 @@ def calculate_betting_strategies(
                 ('D', pred.draw_prob, odds_pred.draw_prob, odds_pred.draw_odds),
                 ('A', pred.away_win_prob, odds_pred.away_win_prob, odds_pred.away_odds),
             ]:
+                # Skip if no actual odds available (don't use inflated fair odds)
+                if actual_odds <= 1.0:
+                    continue
+
                 edge = motson_prob - odds_prob
                 if edge > edge_threshold and bankroll >= stake:
-                    # Use actual odds (with bookmaker margin) not fair odds
-                    decimal_odds = actual_odds if actual_odds > 0 else (1.0 / odds_prob if odds_prob > 0 else 0)
                     won = result.outcome == outcome
-                    profit = (stake * decimal_odds - stake) if won else -stake
+                    profit = (stake * actual_odds - stake) if won else -stake
                     bankroll += profit
 
                     bets.append({
@@ -953,7 +956,7 @@ def calculate_betting_strategies(
                         'week': pred.matchweek,
                         'outcome': outcome,
                         'edge': edge,
-                        'odds': decimal_odds,
+                        'odds': actual_odds,
                         'won': won,
                         'profit': profit,
                         'bankroll': bankroll,
@@ -996,14 +999,15 @@ def calculate_betting_strategies(
                 ('D', pred.draw_prob, odds_pred.draw_prob, odds_pred.draw_odds),
                 ('A', pred.away_win_prob, odds_pred.away_win_prob, odds_pred.away_odds),
             ]:
+                # Skip if no actual odds available
+                if actual_odds <= 1.0:
+                    continue
+
                 edge = motson_prob - odds_prob
                 if edge > min_edge:
-                    # Use actual odds (with bookmaker margin) not fair odds
-                    decimal_odds = actual_odds if actual_odds > 0 else (1.0 / odds_prob if odds_prob > 0 else 0)
-
                     # Kelly formula: f* = (bp - q) / b
                     # where b = decimal_odds - 1, p = our probability, q = 1-p
-                    b = decimal_odds - 1
+                    b = actual_odds - 1
                     p = motson_prob
                     q = 1 - p
 
@@ -1014,7 +1018,7 @@ def calculate_betting_strategies(
 
                         if stake > 0 and bankroll >= stake:
                             won = result.outcome == outcome
-                            profit = (stake * decimal_odds - stake) if won else -stake
+                            profit = (stake * actual_odds - stake) if won else -stake
                             bankroll += profit
 
                             bets.append({
@@ -1024,7 +1028,7 @@ def calculate_betting_strategies(
                                 'edge': edge,
                                 'kelly_pct': kelly_stake * 100,
                                 'stake': stake,
-                                'odds': decimal_odds,
+                                'odds': actual_odds,
                                 'won': won,
                                 'profit': profit,
                                 'bankroll': bankroll,
@@ -1063,21 +1067,20 @@ def calculate_betting_strategies(
         # Find predicted winner and get actual bookmaker odds
         if pred.home_win_prob >= pred.draw_prob and pred.home_win_prob >= pred.away_win_prob:
             predicted = 'H'
-            odds_prob = odds_pred.home_win_prob
             actual_odds = odds_pred.home_odds
         elif pred.draw_prob >= pred.away_win_prob:
             predicted = 'D'
-            odds_prob = odds_pred.draw_prob
             actual_odds = odds_pred.draw_odds
         else:
             predicted = 'A'
-            odds_prob = odds_pred.away_win_prob
             actual_odds = odds_pred.away_odds
 
-        # Use actual odds (with bookmaker margin) not fair odds
-        decimal_odds = actual_odds if actual_odds > 0 else (1.0 / odds_prob if odds_prob > 0 else 0)
+        # Skip if no actual odds available
+        if actual_odds <= 1.0:
+            continue
+
         won = result.outcome == predicted
-        profit = (stake * decimal_odds - stake) if won else -stake
+        profit = (stake * actual_odds - stake) if won else -stake
         bankroll += profit
 
         bets.append({
@@ -1085,7 +1088,7 @@ def calculate_betting_strategies(
             'week': pred.matchweek,
             'predicted': predicted,
             'actual': result.outcome,
-            'odds': decimal_odds,
+            'odds': actual_odds,
             'won': won,
             'profit': profit,
             'bankroll': bankroll,
