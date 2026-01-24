@@ -21,7 +21,7 @@ on:
       include_opta:
         description: 'Attempt to fetch Opta predictions (may fail)'
         required: false
-        default: 'false'
+        default: 'true'
         type: boolean
 
 permissions:
@@ -119,7 +119,7 @@ jobs:
       - name: Fetch Opta predictions
         id: opta_fetch
         continue-on-error: true
-        if: github.event.inputs.include_opta == 'true' || github.event_name == 'schedule'
+        if: github.event.inputs.include_opta != 'false'
         run: |
           echo "Attempting to fetch Opta predictions from The Analyst..."
 
@@ -464,10 +464,10 @@ jobs:
           print("| Strategy | Bets | Win Rate | ROI | Final $ |")
           print("|----------|------|----------|-----|---------|")
 
-          for name in ["value_5pct", "value_10pct", "kelly_25pct", "predicted_winner"]:
-              if name in strategies:
-                  s = strategies[name]
-                  print(f"| {name} | {s['n_bets']} | {s['win_rate']*100:.1f}% | {s['roi']:+.1f}% | ${s['final_bankroll']:.2f} |")
+          # Show all strategies sorted by ROI
+          sorted_strategies = sorted(strategies.items(), key=lambda x: -x[1]['roi'])
+          for name, s in sorted_strategies:
+              print(f"| {name} | {s['n_bets']} | {s['win_rate']*100:.1f}% | {s['roi']:+.1f}% | ${s['final_bankroll']:.2f} |")
 
           print("")
           if best.get("roi", 0) > 0:
