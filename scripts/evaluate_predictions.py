@@ -65,6 +65,10 @@ class MatchPrediction:
     source: str  # 'motson', 'betting', 'opta'
     matchweek: int = 0
     match_id: str = ""
+    # Actual decimal odds (for betting sources - includes bookmaker margin)
+    home_odds: float = 0.0
+    draw_odds: float = 0.0
+    away_odds: float = 0.0
 
 
 @dataclass
@@ -207,7 +211,8 @@ def parse_betting_predictions(odds_data: List[Dict]) -> Dict[Tuple[str, str], Ma
     Parse betting odds into match predictions.
 
     Uses Bet365 odds (B365H, B365D, B365A) as primary, with fallback to others.
-    Normalizes probabilities to sum to 1.0.
+    Normalizes probabilities to sum to 1.0, but also stores actual decimal odds
+    for accurate ROI calculation (which includes bookmaker margin).
     """
     predictions = {}
 
@@ -229,17 +234,18 @@ def parse_betting_predictions(odds_data: List[Dict]) -> Dict[Tuple[str, str], Ma
             ]
 
             home_prob = draw_prob = away_prob = 0.0
+            actual_home_odds = actual_draw_odds = actual_away_odds = 0.0
 
             for h_key, d_key, a_key in odds_sources:
                 if h_key in row and row[h_key]:
                     try:
-                        home_odds = float(row[h_key])
-                        draw_odds = float(row[d_key])
-                        away_odds = float(row[a_key])
+                        actual_home_odds = float(row[h_key])
+                        actual_draw_odds = float(row[d_key])
+                        actual_away_odds = float(row[a_key])
 
-                        home_prob = odds_to_probability(home_odds)
-                        draw_prob = odds_to_probability(draw_odds)
-                        away_prob = odds_to_probability(away_odds)
+                        home_prob = odds_to_probability(actual_home_odds)
+                        draw_prob = odds_to_probability(actual_draw_odds)
+                        away_prob = odds_to_probability(actual_away_odds)
 
                         if home_prob > 0:
                             break
@@ -249,7 +255,7 @@ def parse_betting_predictions(odds_data: List[Dict]) -> Dict[Tuple[str, str], Ma
             if home_prob == 0:
                 continue
 
-            # Normalize to remove bookmaker margin
+            # Normalize to remove bookmaker margin (for fair probability comparison)
             total = home_prob + draw_prob + away_prob
             if total > 0:
                 home_prob /= total
@@ -263,6 +269,10 @@ def parse_betting_predictions(odds_data: List[Dict]) -> Dict[Tuple[str, str], Ma
                 draw_prob=draw_prob,
                 away_win_prob=away_prob,
                 source='betting',
+                # Store actual odds for ROI calculation
+                home_odds=actual_home_odds,
+                draw_odds=actual_draw_odds,
+                away_odds=actual_away_odds,
             )
 
             predictions[(home_team, away_team)] = pred
@@ -833,10 +843,11 @@ def calculate_roi(predictions: List[MatchPrediction], results: List[MatchResult]
         odds_pred = betting_odds[key]
 
         # Check each outcome for edge
-        for outcome, motson_prob, odds_prob, attr in [
-            ('H', pred.home_win_prob, odds_pred.home_win_prob, 'home_win_prob'),
-            ('D', pred.draw_prob, odds_pred.draw_prob, 'draw_prob'),
-            ('A', pred.away_win_prob, odds_pred.away_win_prob, 'away_win_prob'),
+        # Use actual bookmaker odds for ROI calculation (includes their margin)
+        for outcome, motson_prob, odds_prob, actual_odds in [
+            ('H', pred.home_win_prob, odds_pred.home_win_prob, odds_pred.home_odds),
+            ('D', pred.draw_prob, odds_pred.draw_prob, odds_pred.draw_odds),
+            ('A', pred.away_win_prob, odds_pred.away_win_prob, odds_pred.away_odds),
         ]:
             edge = motson_prob - odds_prob
             if edge > edge_threshold:
@@ -844,8 +855,8 @@ def calculate_roi(predictions: List[MatchPrediction], results: List[MatchResult]
                 total_staked += stake
                 n_bets += 1
 
-                # Calculate decimal odds from implied probability
-                decimal_odds = 1.0 / odds_prob if odds_prob > 0 else 0
+                # Use actual bookmaker odds (not fair odds derived from normalized probs)
+                decimal_odds = actual_odds if actual_odds > 0 else (1.0 / odds_prob if odds_prob > 0 else 0)
 
                 if result.outcome == outcome:
                     returns = stake * decimal_odds
@@ -857,6 +868,7 @@ def calculate_roi(predictions: List[MatchPrediction], results: List[MatchResult]
                     'bet': outcome,
                     'motson_prob': motson_prob,
                     'odds_prob': odds_prob,
+                    'actual_odds': decimal_odds,
                     'edge': edge,
                     'result': result.outcome,
                     'won': result.outcome == outcome,
@@ -922,14 +934,16 @@ def calculate_betting_strategies(
             result = results_map[key]
             odds_pred = betting_odds[key]
 
-            for outcome, motson_prob, odds_prob in [
-                ('H', pred.home_win_prob, odds_pred.home_win_prob),
-                ('D', pred.draw_prob, odds_pred.draw_prob),
-                ('A', pred.away_win_prob, odds_pred.away_win_prob),
+            # Use actual bookmaker odds for realistic ROI
+            for outcome, motson_prob, odds_prob, actual_odds in [
+                ('H', pred.home_win_prob, odds_pred.home_win_prob, odds_pred.home_odds),
+                ('D', pred.draw_prob, odds_pred.draw_prob, odds_pred.draw_odds),
+                ('A', pred.away_win_prob, odds_pred.away_win_prob, odds_pred.away_odds),
             ]:
                 edge = motson_prob - odds_prob
                 if edge > edge_threshold and bankroll >= stake:
-                    decimal_odds = 1.0 / odds_prob if odds_prob > 0 else 0
+                    # Use actual odds (with bookmaker margin) not fair odds
+                    decimal_odds = actual_odds if actual_odds > 0 else (1.0 / odds_prob if odds_prob > 0 else 0)
                     won = result.outcome == outcome
                     profit = (stake * decimal_odds - stake) if won else -stake
                     bankroll += profit
@@ -976,14 +990,16 @@ def calculate_betting_strategies(
             result = results_map[key]
             odds_pred = betting_odds[key]
 
-            for outcome, motson_prob, odds_prob in [
-                ('H', pred.home_win_prob, odds_pred.home_win_prob),
-                ('D', pred.draw_prob, odds_pred.draw_prob),
-                ('A', pred.away_win_prob, odds_pred.away_win_prob),
+            # Use actual bookmaker odds for realistic ROI
+            for outcome, motson_prob, odds_prob, actual_odds in [
+                ('H', pred.home_win_prob, odds_pred.home_win_prob, odds_pred.home_odds),
+                ('D', pred.draw_prob, odds_pred.draw_prob, odds_pred.draw_odds),
+                ('A', pred.away_win_prob, odds_pred.away_win_prob, odds_pred.away_odds),
             ]:
                 edge = motson_prob - odds_prob
                 if edge > min_edge:
-                    decimal_odds = 1.0 / odds_prob if odds_prob > 0 else 0
+                    # Use actual odds (with bookmaker margin) not fair odds
+                    decimal_odds = actual_odds if actual_odds > 0 else (1.0 / odds_prob if odds_prob > 0 else 0)
 
                     # Kelly formula: f* = (bp - q) / b
                     # where b = decimal_odds - 1, p = our probability, q = 1-p
@@ -1044,18 +1060,22 @@ def calculate_betting_strategies(
         result = results_map[key]
         odds_pred = betting_odds[key]
 
-        # Find predicted winner
+        # Find predicted winner and get actual bookmaker odds
         if pred.home_win_prob >= pred.draw_prob and pred.home_win_prob >= pred.away_win_prob:
             predicted = 'H'
             odds_prob = odds_pred.home_win_prob
+            actual_odds = odds_pred.home_odds
         elif pred.draw_prob >= pred.away_win_prob:
             predicted = 'D'
             odds_prob = odds_pred.draw_prob
+            actual_odds = odds_pred.draw_odds
         else:
             predicted = 'A'
             odds_prob = odds_pred.away_win_prob
+            actual_odds = odds_pred.away_odds
 
-        decimal_odds = 1.0 / odds_prob if odds_prob > 0 else 0
+        # Use actual odds (with bookmaker margin) not fair odds
+        decimal_odds = actual_odds if actual_odds > 0 else (1.0 / odds_prob if odds_prob > 0 else 0)
         won = result.outcome == predicted
         profit = (stake * decimal_odds - stake) if won else -stake
         bankroll += profit
@@ -1473,6 +1493,10 @@ def load_betting_odds_from_csv(csv_path: Path) -> Dict[Tuple[str, str], MatchPre
                     draw_prob=draw_prob,
                     away_win_prob=away_prob,
                     source='betting',
+                    # Store actual odds for ROI calculation
+                    home_odds=home_odds,
+                    draw_odds=draw_odds,
+                    away_odds=away_odds,
                 )
                 predictions[(home_team, away_team)] = pred
 
