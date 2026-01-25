@@ -9,55 +9,79 @@ import {
   AlertCircle,
 } from 'lucide-react';
 
-import { getResults, runCounterfactual, getSeasonProbabilities } from '../api';
+import { getResults, getFixtures, runIRTCounterfactual, getIRT100MSimulation } from '../api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorMessage from '../components/ErrorMessage';
 
 export default function Counterfactual() {
   const [selectedMatches, setSelectedMatches] = React.useState([]);
   const [counterfactualResults, setCounterfactualResults] = React.useState(null);
+  const [showUpcoming, setShowUpcoming] = React.useState(true); // Default to upcoming
 
   const resultsQuery = useQuery({
     queryKey: ['results'],
     queryFn: () => getResults(),
   });
 
+  const fixturesQuery = useQuery({
+    queryKey: ['fixtures', true],
+    queryFn: () => getFixtures(true),
+  });
+
   const baselineQuery = useQuery({
-    queryKey: ['seasonProbabilities'],
-    queryFn: getSeasonProbabilities,
+    queryKey: ['irt100m'],
+    queryFn: getIRT100MSimulation,
   });
 
   const counterfactualMutation = useMutation({
-    mutationFn: runCounterfactual,
+    mutationFn: (scenarios) => runIRTCounterfactual(scenarios, 10000),
     onSuccess: (data) => {
-      setCounterfactualResults(data.results);
+      setCounterfactualResults(data);
     },
   });
 
-  const matches = resultsQuery.data?.results || [];
-  const baseline = baselineQuery.data?.predictions || [];
+  const pastMatches = resultsQuery.data?.results || [];
+  const upcomingMatches = fixturesQuery.data?.fixtures || [];
+  const baseline = baselineQuery.data?.teams || [];
 
-  const handleMatchSelect = (matchId) => {
+  const handleMatchSelect = (match, isUpcoming) => {
+    const matchKey = isUpcoming
+      ? `${match.home_team}-${match.away_team}`
+      : match.match_id;
+
     setSelectedMatches((prev) => {
-      const existing = prev.find((m) => m.match_id === matchId);
+      const existing = prev.find((m) => m.key === matchKey);
       if (existing) {
-        return prev.filter((m) => m.match_id !== matchId);
+        return prev.filter((m) => m.key !== matchKey);
       }
-      return [...prev, { match_id: matchId, result: 'H' }];
+      return [...prev, {
+        key: matchKey,
+        home_team: match.home_team,
+        away_team: match.away_team,
+        result: 'H',
+        isUpcoming,
+        matchweek: match.matchweek,
+      }];
     });
     setCounterfactualResults(null);
   };
 
-  const handleResultChange = (matchId, result) => {
+  const handleResultChange = (matchKey, result) => {
     setSelectedMatches((prev) =>
-      prev.map((m) => (m.match_id === matchId ? { ...m, result } : m))
+      prev.map((m) => (m.key === matchKey ? { ...m, result } : m))
     );
     setCounterfactualResults(null);
   };
 
   const handleSimulate = () => {
     if (selectedMatches.length === 0) return;
-    counterfactualMutation.mutate(selectedMatches);
+    // Convert to IRT counterfactual format
+    const scenarios = selectedMatches.map((m) => ({
+      home_team: m.home_team,
+      away_team: m.away_team,
+      result: m.result,
+    }));
+    counterfactualMutation.mutate(scenarios);
   };
 
   const handleReset = () => {
@@ -68,14 +92,15 @@ export default function Counterfactual() {
   // Group matches by matchweek
   const matchesByWeek = React.useMemo(() => {
     const grouped = {};
-    matches.forEach((match) => {
+    const matchesToShow = showUpcoming ? upcomingMatches : pastMatches;
+    matchesToShow.forEach((match) => {
       if (!grouped[match.matchweek]) {
         grouped[match.matchweek] = [];
       }
       grouped[match.matchweek].push(match);
     });
     return grouped;
-  }, [matches]);
+  }, [pastMatches, upcomingMatches, showUpcoming]);
 
   return (
     <div className="space-y-6">
@@ -112,18 +137,54 @@ export default function Counterfactual() {
         </div>
       </div>
 
-      {/* Instructions */}
-      <div className="card bg-amber-50 border-amber-200">
-        <div className="card-body">
-          <div className="flex items-start space-x-3">
-            <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
-            <div className="text-sm text-amber-800">
-              <p className="font-medium">How to use:</p>
-              <ol className="list-decimal list-inside mt-1 space-y-1">
-                <li>Select matches from the list below to modify</li>
-                <li>Choose an alternate result (Home win, Draw, or Away win)</li>
-                <li>Click "Simulate" to see how the season would unfold</li>
-              </ol>
+      {/* Toggle and Instructions */}
+      <div className="flex flex-col sm:flex-row gap-4">
+        {/* Toggle */}
+        <div className="card flex-1">
+          <div className="card-body">
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={() => { setShowUpcoming(true); setSelectedMatches([]); setCounterfactualResults(null); }}
+                className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                  showUpcoming
+                    ? 'bg-primary-500 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Upcoming Matches
+              </button>
+              <button
+                onClick={() => { setShowUpcoming(false); setSelectedMatches([]); setCounterfactualResults(null); }}
+                className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                  !showUpcoming
+                    ? 'bg-primary-500 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Past Results
+              </button>
+            </div>
+            <p className="text-sm text-slate-500 mt-2">
+              {showUpcoming
+                ? 'Predict upcoming results and see how they change the season outlook'
+                : 'Change past results to explore alternate timelines'}
+            </p>
+          </div>
+        </div>
+
+        {/* Instructions */}
+        <div className="card bg-amber-50 border-amber-200 flex-1">
+          <div className="card-body">
+            <div className="flex items-start space-x-3">
+              <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-amber-800">
+                <p className="font-medium">How to use:</p>
+                <ol className="list-decimal list-inside mt-1 space-y-1">
+                  <li>Select matches to {showUpcoming ? 'predict' : 'modify'}</li>
+                  <li>Choose a result (Home win, Draw, or Away win)</li>
+                  <li>Click "Simulate" to see the impact on season outcomes</li>
+                </ol>
+              </div>
             </div>
           </div>
         </div>
@@ -139,12 +200,16 @@ export default function Counterfactual() {
             </p>
           </div>
           <div className="card-body max-h-[600px] overflow-y-auto">
-            {resultsQuery.isLoading ? (
+            {(showUpcoming ? fixturesQuery.isLoading : resultsQuery.isLoading) ? (
               <LoadingSpinner />
+            ) : Object.keys(matchesByWeek).length === 0 ? (
+              <p className="text-slate-500 text-center py-4">
+                {showUpcoming ? 'No upcoming matches found' : 'No past results found'}
+              </p>
             ) : (
               <div className="space-y-4">
                 {Object.entries(matchesByWeek)
-                  .sort(([a], [b]) => Number(b) - Number(a))
+                  .sort(([a], [b]) => showUpcoming ? Number(a) - Number(b) : Number(b) - Number(a))
                   .map(([week, weekMatches]) => (
                     <MatchWeekSection
                       key={week}
@@ -153,6 +218,7 @@ export default function Counterfactual() {
                       selectedMatches={selectedMatches}
                       onMatchSelect={handleMatchSelect}
                       onResultChange={handleResultChange}
+                      isUpcoming={showUpcoming}
                     />
                   ))}
               </div>
@@ -190,13 +256,35 @@ export default function Counterfactual() {
         <div className="card bg-gradient-to-br from-primary-50 to-white">
           <div className="card-body">
             <h3 className="font-semibold text-primary-900 mb-2">
-              The Butterfly Effect
+              {showUpcoming ? 'Scenario Analysis' : 'The Butterfly Effect'}
             </h3>
+            {counterfactualResults.scenarios_applied && (
+              <ul className="text-sm text-primary-800 mb-2 list-disc list-inside">
+                {counterfactualResults.scenarios_applied.map((s, i) => (
+                  <li key={i}>{s}</li>
+                ))}
+              </ul>
+            )}
             <p className="text-sm text-primary-700">
-              Changing {selectedMatches.length} match{selectedMatches.length !== 1 ? 'es' : ''}{' '}
-              ripples through the rest of the season. The Monte Carlo simulation
-              shows how different those early results could make the final standings.
+              {showUpcoming
+                ? `Based on ${counterfactualResults.n_simulations?.toLocaleString()} simulations of the remaining season.`
+                : `Changing ${selectedMatches.length} match${selectedMatches.length !== 1 ? 'es' : ''} ripples through the rest of the season.`}
             </p>
+            {counterfactualResults.deltas && counterfactualResults.deltas.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-primary-200">
+                <h4 className="text-sm font-medium text-primary-900 mb-2">Key Changes:</h4>
+                <div className="space-y-1">
+                  {counterfactualResults.deltas.map((d) => (
+                    <div key={d.team} className="text-sm text-primary-700 flex items-center justify-between">
+                      <span>{d.team}</span>
+                      <span className={d.p_title_delta > 0 ? 'text-emerald-600' : d.p_title_delta < 0 ? 'text-red-600' : ''}>
+                        Title: {d.p_title_delta > 0 ? '+' : ''}{d.p_title_delta.toFixed(2)}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -210,8 +298,12 @@ function MatchWeekSection({
   selectedMatches,
   onMatchSelect,
   onResultChange,
+  isUpcoming = false,
 }) {
-  const [isExpanded, setIsExpanded] = React.useState(week >= matches[0]?.matchweek - 2);
+  // Expand first two weeks for upcoming, recent weeks for past
+  const [isExpanded, setIsExpanded] = React.useState(
+    isUpcoming ? week <= (matches[0]?.matchweek || 0) + 1 : week >= (matches[0]?.matchweek || 0) - 2
+  );
 
   return (
     <div className="border border-slate-200 rounded-lg overflow-hidden">
@@ -229,17 +321,23 @@ function MatchWeekSection({
       {isExpanded && (
         <div className="divide-y divide-slate-100">
           {matches.map((match) => {
-            const selected = selectedMatches.find((m) => m.match_id === match.match_id);
-            const actualResult =
-              match.home_goals > match.away_goals
+            const matchKey = isUpcoming
+              ? `${match.home_team}-${match.away_team}`
+              : match.match_id;
+            const selected = selectedMatches.find((m) => m.key === matchKey);
+
+            // For past matches, show actual result
+            const actualResult = !isUpcoming
+              ? match.home_goals > match.away_goals
                 ? 'H'
                 : match.home_goals < match.away_goals
                 ? 'A'
-                : 'D';
+                : 'D'
+              : null;
 
             return (
               <div
-                key={match.match_id}
+                key={matchKey}
                 className={`p-3 ${selected ? 'bg-primary-50' : ''}`}
               >
                 <div className="flex items-center justify-between">
@@ -247,26 +345,42 @@ function MatchWeekSection({
                     <input
                       type="checkbox"
                       checked={!!selected}
-                      onChange={() => onMatchSelect(match.match_id)}
+                      onChange={() => onMatchSelect(match, isUpcoming)}
                       className="w-4 h-4 text-primary-600 rounded"
                     />
                     <div>
                       <div className="text-sm font-medium text-slate-900">
-                        {match.home_team} {match.home_goals} - {match.away_goals}{' '}
+                        {match.home_team}
+                        {!isUpcoming && ` ${match.home_goals} - ${match.away_goals}`}
+                        {isUpcoming && ' vs '}
+                        {!isUpcoming && ' '}
                         {match.away_team}
                       </div>
-                      <div className="text-xs text-slate-400">
-                        Actual: {actualResult === 'H' ? 'Home win' : actualResult === 'A' ? 'Away win' : 'Draw'}
-                      </div>
+                      {!isUpcoming && (
+                        <div className="text-xs text-slate-400">
+                          Actual: {actualResult === 'H' ? 'Home win' : actualResult === 'A' ? 'Away win' : 'Draw'}
+                        </div>
+                      )}
+                      {isUpcoming && match.date && (
+                        <div className="text-xs text-slate-400">
+                          {new Date(match.date).toLocaleDateString('en-GB', {
+                            weekday: 'short',
+                            day: 'numeric',
+                            month: 'short',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
+                        </div>
+                      )}
                     </div>
                   </div>
 
                   {selected && (
                     <div className="flex items-center space-x-2">
-                      <span className="text-xs text-slate-500">Change to:</span>
+                      <span className="text-xs text-slate-500">{isUpcoming ? 'Predict:' : 'Change to:'}</span>
                       <select
                         value={selected.result}
-                        onChange={(e) => onResultChange(match.match_id, e.target.value)}
+                        onChange={(e) => onResultChange(matchKey, e.target.value)}
                         className="text-sm border border-slate-200 rounded px-2 py-1"
                       >
                         <option value="H">Home win</option>
@@ -287,25 +401,35 @@ function MatchWeekSection({
 
 function ComparisonTable({ baseline, counterfactual }) {
   // Create comparison data
+  // baseline is from 100M simulations (array of {team, predicted_position, position_distribution})
+  // counterfactual is from IRT counterfactual (has baseline and counterfactual objects)
   const data = React.useMemo(() => {
-    const baselineMap = new Map(baseline.map((t) => [t.team, t]));
+    if (!baseline || baseline.length === 0) return [];
+
+    const cfBaseline = counterfactual?.baseline || {};
+    const cfResults = counterfactual?.counterfactual || {};
 
     return baseline
       .map((team) => {
-        const cf = counterfactual?.[team.team];
+        const teamName = team.team;
+        const cf = cfResults[teamName];
+        const cfBase = cfBaseline[teamName];
+
+        // Use counterfactual baseline if available, otherwise use 100M baseline
+        const baselineTitle = cfBase?.p_title ?? (team.position_distribution?.[0]?.probability * 100) ?? 0;
+        const baselinePos = cfBase?.predicted_position ?? team.predicted_position;
+
         return {
-          team: team.team,
-          baselinePos: team.expected_position,
-          baselineTitle: team.title_prob,
-          baselineRel: team.relegation_prob,
-          cfPos: cf?.expected_position,
-          cfTitle: cf?.title_prob,
-          cfRel: cf?.relegation_prob,
-          posDiff: cf ? cf.expected_position - team.expected_position : 0,
-          titleDiff: cf ? cf.title_prob - team.title_prob : 0,
+          team: teamName,
+          baselinePos: baselinePos,
+          baselineTitle: baselineTitle / 100, // Convert to decimal
+          cfPos: cf?.predicted_position,
+          cfTitle: cf?.p_title ? cf.p_title / 100 : null, // Convert to decimal
+          posDiff: cf ? cf.predicted_position - baselinePos : 0,
+          titleDiff: cf ? (cf.p_title - baselineTitle) / 100 : 0,
         };
       })
-      .sort((a, b) => (counterfactual ? a.cfPos - b.cfPos : a.baselinePos - b.baselinePos));
+      .sort((a, b) => (counterfactual ? (a.cfPos || a.baselinePos) - (b.cfPos || b.baselinePos) : a.baselinePos - b.baselinePos));
   }, [baseline, counterfactual]);
 
   return (

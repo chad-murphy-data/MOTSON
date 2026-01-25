@@ -56,6 +56,15 @@ export const getHistoricalTitleRace = () => fetchApi('/history/title-race');
 export const getResults = (matchweek) =>
   fetchApi(`/results${matchweek ? `?matchweek=${matchweek}` : ''}`);
 
+// Fixtures (all matches including upcoming)
+export const getFixtures = (upcomingOnly = false, matchweek = null) => {
+  const params = new URLSearchParams();
+  if (upcomingOnly) params.append('upcoming_only', 'true');
+  if (matchweek) params.append('matchweek', matchweek);
+  const query = params.toString();
+  return fetchApi(`/fixtures${query ? `?${query}` : ''}`);
+};
+
 // Counterfactual - for "what if" scenarios with past match results
 export const runCounterfactual = (scenarios) =>
   fetchApi('/counterfactual', {

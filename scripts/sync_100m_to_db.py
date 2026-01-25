@@ -27,16 +27,19 @@ def main():
 
         cursor.execute('''
             INSERT OR REPLACE INTO season_predictions
-            (team, week, expected_points, expected_position, title_prob, top4_prob,
-             relegation_prob, position_probs, last_updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            (team, week, expected_points, points_std, expected_position, position_std,
+             title_prob, top4_prob, top6_prob, relegation_prob, position_probs, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         ''', (
             team,
             week,
             stats['expected_points'],
+            stats.get('points_std', 0),  # Not in 100M data currently
             stats['expected_position'],
+            stats.get('position_std', 0),  # Not in 100M data currently
             stats['p_title'] / 100,
             stats['p_top4'] / 100,
+            stats.get('p_top6', 0) / 100,  # Available in 100M data
             stats['p_relegation'] / 100,
             json.dumps(position_probs_list)
         ))

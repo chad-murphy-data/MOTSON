@@ -539,28 +539,42 @@ async def get_relegation_battle():
 
 @app.get("/history/points")
 async def get_historical_points():
-    """Get historical predicted vs actual points for all teams over the season."""
-    db = get_db()
-    history = db.get_all_teams_history()
+    """Get historical predicted final points for all teams over the season.
 
-    if not history:
+    Returns the predicted END OF SEASON points total as it evolved week by week,
+    along with each team's actual accumulated points at each week.
+    """
+    db = get_db()
+
+    # Get season predictions history (predicted final points per week)
+    predictions_history = db.get_all_season_predictions_history()
+    # Get team state history (actual points per week)
+    state_history = db.get_all_teams_history()
+
+    if not predictions_history:
         raise HTTPException(status_code=404, detail="No historical data available - run update first")
+
+    # Build lookup for actual points by (team, week)
+    actual_points_lookup = {}
+    for record in state_history:
+        actual_points_lookup[(record["team"], record["week"])] = record["actual_points"]
 
     # Group by team
     teams_data = {}
-    for record in history:
+    for record in predictions_history:
         team = record["team"]
+        week = record["week"]
         if team not in teams_data:
             teams_data[team] = []
         teams_data[team].append({
-            "week": record["week"],
-            "expected_points": record["expected_points"],
-            "actual_points": record["actual_points"],
+            "week": week,
+            "predicted_final_points": record["expected_points"],  # End of season prediction
+            "actual_points": actual_points_lookup.get((team, week), 0),  # Current accumulated
         })
 
     return {
         "history": teams_data,
-        "weeks": sorted(set(r["week"] for r in history)),
+        "weeks": sorted(set(r["week"] for r in predictions_history)),
     }
 
 
@@ -928,6 +942,51 @@ async def get_results(matchweek: Optional[int] = None):
     except Exception as e:
         logger.error(f"Failed to fetch results: {e}")
         raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.get("/fixtures")
+async def get_fixtures(upcoming_only: bool = False, matchweek: Optional[int] = None):
+    """Get all fixtures, optionally filtered to upcoming only or by matchweek."""
+    db = get_db()
+
+    # Get fixtures from database
+    all_fixtures = db.get_fixtures()
+
+    if not all_fixtures:
+        # Fallback to API
+        api = FootballDataAPI()
+        try:
+            api_fixtures = await api.get_all_fixtures()
+            db.save_fixtures(api_fixtures)
+            all_fixtures = [
+                {
+                    "match_id": f.match_id,
+                    "matchweek": f.matchweek,
+                    "date": f.date.isoformat() if f.date else None,
+                    "home_team": f.home_team,
+                    "away_team": f.away_team,
+                    "status": f.status,
+                }
+                for f in api_fixtures
+            ]
+        except Exception as e:
+            logger.error(f"Failed to fetch fixtures: {e}")
+            raise HTTPException(status_code=503, detail=str(e))
+
+    # Apply filters
+    fixtures = all_fixtures
+    if upcoming_only:
+        fixtures = [f for f in fixtures if f.get("status") != "FINISHED"]
+    if matchweek:
+        fixtures = [f for f in fixtures if f.get("matchweek") == matchweek]
+
+    # Sort by matchweek, then date
+    fixtures = sorted(fixtures, key=lambda f: (f.get("matchweek", 0), f.get("date", "")))
+
+    return {
+        "fixtures": fixtures,
+        "count": len(fixtures),
+    }
 
 
 # ============================================================
@@ -1364,6 +1423,11 @@ async def run_irt_counterfactual(
         seed=42
     )
 
+    # Build lookup for past results
+    results_lookup = {}
+    for r in results:
+        results_lookup[(r.home_team, r.away_team)] = r
+
     # Apply counterfactual scenarios
     cf_points = current_points.copy()
     cf_fixtures = []
@@ -1379,34 +1443,63 @@ async def run_irt_counterfactual(
         if away not in irt_states:
             raise HTTPException(status_code=400, detail=f"Unknown team: {away}")
 
-        # Find and remove the fixture from remaining
-        fixture_found = False
-        for f in remaining_fixtures:
-            if f["home_team"] == home and f["away_team"] == away:
-                cf_fixtures.append(f)
-                fixture_found = True
-                break
+        # Check if this is a past match or upcoming fixture
+        past_result = results_lookup.get((home, away))
 
-        if not fixture_found:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Fixture {home} vs {away} not found in remaining fixtures"
-            )
+        if past_result:
+            # Past match - undo actual result and apply counterfactual
+            # Undo actual result
+            if past_result.home_goals > past_result.away_goals:
+                cf_points[home] -= 3
+            elif past_result.home_goals < past_result.away_goals:
+                cf_points[away] -= 3
+            else:
+                cf_points[home] -= 1
+                cf_points[away] -= 1
 
-        # Apply result to points
-        result = scenario.result.upper()
-        if result == "H":
-            cf_points[home] += 3
-            applied_scenarios.append(f"{home} beat {away}")
-        elif result == "A":
-            cf_points[away] += 3
-            applied_scenarios.append(f"{away} beat {home} (away)")
-        elif result == "D":
-            cf_points[home] += 1
-            cf_points[away] += 1
-            applied_scenarios.append(f"{home} drew with {away}")
+            # Apply counterfactual result
+            result = scenario.result.upper()
+            if result == "H":
+                cf_points[home] += 3
+                applied_scenarios.append(f"{home} beat {away} (was {past_result.home_goals}-{past_result.away_goals})")
+            elif result == "A":
+                cf_points[away] += 3
+                applied_scenarios.append(f"{away} beat {home} away (was {past_result.home_goals}-{past_result.away_goals})")
+            elif result == "D":
+                cf_points[home] += 1
+                cf_points[away] += 1
+                applied_scenarios.append(f"{home} drew with {away} (was {past_result.home_goals}-{past_result.away_goals})")
+            else:
+                raise HTTPException(status_code=400, detail=f"Invalid result: {result}. Use H, D, or A")
         else:
-            raise HTTPException(status_code=400, detail=f"Invalid result: {result}. Use H, D, or A")
+            # Upcoming fixture - find and remove from remaining
+            fixture_found = False
+            for f in remaining_fixtures:
+                if f["home_team"] == home and f["away_team"] == away:
+                    cf_fixtures.append(f)
+                    fixture_found = True
+                    break
+
+            if not fixture_found:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Fixture {home} vs {away} not found in results or remaining fixtures"
+                )
+
+            # Apply result to points
+            result = scenario.result.upper()
+            if result == "H":
+                cf_points[home] += 3
+                applied_scenarios.append(f"{home} beat {away}")
+            elif result == "A":
+                cf_points[away] += 3
+                applied_scenarios.append(f"{away} beat {home} (away)")
+            elif result == "D":
+                cf_points[home] += 1
+                cf_points[away] += 1
+                applied_scenarios.append(f"{home} drew with {away}")
+            else:
+                raise HTTPException(status_code=400, detail=f"Invalid result: {result}. Use H, D, or A")
 
     # Remove applied fixtures from remaining
     cf_remaining = [

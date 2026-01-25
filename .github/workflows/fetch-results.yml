@@ -71,6 +71,7 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git add data/motson.db
           git diff --staged --quiet || git commit -m "Update match results (Week ${{ steps.after.outputs.week }})"
+          git pull --rebase origin main || true
           git push
 
       - name: Trigger Render deploy if new results

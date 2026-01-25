@@ -34,8 +34,8 @@ class ModelConfig:
     INITIAL_GRAVITY_WEIGHT: float = 0.8  # Starting gravity strength
 
     # Monte Carlo simulation
-    DEFAULT_SIMULATIONS: int = 10001   # Number of season simulations (one more than Opta's supercomputer)
-    QUICK_SIMULATIONS: int = 1001      # For counterfactuals (still better than Opta)
+    DEFAULT_SIMULATIONS: int = 10000   # Number of season simulations (10,000 x 10,000 = 100M total)
+    QUICK_SIMULATIONS: int = 1001      # For counterfactuals (quick single-run sims)
 
     # Home/away theta offset
     HOME_AWAY_OFFSET: float = 0.15     # Away theta = home theta - this

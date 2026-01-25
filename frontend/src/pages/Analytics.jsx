@@ -149,7 +149,7 @@ export default function Analytics() {
           active={view === 'points'}
           onClick={() => setView('points')}
           icon={TrendingUp}
-          label="Predicted Points"
+          label="Final Points"
         />
         <ViewButton
           active={view === 'strength'}
@@ -253,7 +253,7 @@ export default function Analytics() {
         <div className="card-body">
           <h3 className="font-semibold text-slate-900 mb-2">
             {view === 'title' && 'Title Probability Trajectories'}
-            {view === 'points' && 'Predicted vs Actual Points'}
+            {view === 'points' && 'Predicted Final Points'}
             {view === 'strength' && 'Team Strength (Theta)'}
             {view === 'heatmap' && 'Position Probability Heatmap'}
             {view === 'deviation' && 'Performance vs Expected Points'}
@@ -315,7 +315,8 @@ function PointsChart({ data, selectedTeams }) {
     selectedTeams.forEach(team => {
       const teamData = data.history[team]?.find(d => d.week === week);
       if (teamData) {
-        point[`${team}_expected`] = teamData.expected_points;
+        // predicted_final_points = predicted end-of-season total
+        point[`${team}_predicted`] = teamData.predicted_final_points;
         point[`${team}_actual`] = teamData.actual_points;
       }
     });
@@ -341,7 +342,8 @@ function PointsChart({ data, selectedTeams }) {
   return (
     <div className="card">
       <div className="card-header">
-        <h2 className="font-semibold text-slate-900">Predicted Points Over Season</h2>
+        <h2 className="font-semibold text-slate-900">Predicted Final Points Over Season</h2>
+        <p className="text-sm text-slate-500">How MOTSON's end-of-season predictions evolve week by week</p>
       </div>
       <div className="card-body">
         <ResponsiveContainer width="100%" height={500}>
@@ -355,7 +357,7 @@ function PointsChart({ data, selectedTeams }) {
             <YAxis
               tick={{ fontSize: 12, fill: '#64748b' }}
               label={{ value: 'Points', angle: -90, position: 'insideLeft' }}
-              domain={[0, 'auto']}
+              domain={['auto', 'auto']}
             />
             <Tooltip
               contentStyle={{
@@ -369,8 +371,8 @@ function PointsChart({ data, selectedTeams }) {
               <React.Fragment key={team}>
                 <Line
                   type="monotone"
-                  dataKey={`${team}_expected`}
-                  name={`${team} (Predicted)`}
+                  dataKey={`${team}_predicted`}
+                  name={`${team} (Predicted Final)`}
                   stroke={getTeamColor(team)}
                   strokeWidth={2}
                   dot={false}
@@ -378,7 +380,7 @@ function PointsChart({ data, selectedTeams }) {
                 <Line
                   type="monotone"
                   dataKey={`${team}_actual`}
-                  name={`${team} (Actual)`}
+                  name={`${team} (Current)`}
                   stroke={getTeamColor(team)}
                   strokeWidth={2}
                   strokeDasharray="5 5"
