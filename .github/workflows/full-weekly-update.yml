@@ -1,19 +1,27 @@
 name: Full Weekly Update
 
 on:
-  # Manual trigger only - this is the "do everything" button
+  # Scheduled runs after typical match windows (times in UTC)
+  # Saturday 20:00 UTC (3:00 PM ET) - after early Saturday matches
+  # Sunday 19:00 UTC (2:00 PM ET) - after Saturday evening matches
+  # Mon-Fri 22:30 UTC (5:30 PM ET) - after evening matches
+  schedule:
+    - cron: '0 20 * * 6'     # Saturday 20:00 UTC (3:00 PM ET)
+    - cron: '0 19 * * 0'     # Sunday 19:00 UTC (2:00 PM ET)
+    - cron: '30 22 * * 1-5'  # Mon-Fri 22:30 UTC (5:30 PM ET)
+
+  # Manual trigger
   workflow_dispatch:
     inputs:
-      force_simulations:
-        description: 'Force 100M simulations even if no new results'
-        required: false
-        default: false
-        type: boolean
-      skip_simulations:
-        description: 'Skip 100M simulations (faster, uses cached data)'
-        required: false
-        default: false
-        type: boolean
+      simulation_mode:
+        description: '100M Simulations'
+        required: true
+        default: 'auto'
+        type: choice
+        options:
+          - auto    # Run only if new results (default)
+          - force   # Always run simulations
+          - skip    # Skip simulations entirely
 
 permissions:
   contents: write
@@ -85,8 +93,8 @@ jobs:
   run-simulations:
     needs: fetch-results
     if: |
-      inputs.skip_simulations != true &&
-      (needs.fetch-results.outputs.has_new_results == 'true' || inputs.force_simulations == true)
+      inputs.simulation_mode != 'skip' &&
+      (needs.fetch-results.outputs.has_new_results == 'true' || inputs.simulation_mode == 'force')
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -128,49 +136,9 @@ jobs:
           git pull --rebase origin main || true
           git push
 
-  # Step 3: Evaluate predictions
-  evaluate-predictions:
-    needs: [fetch-results, run-simulations]
-    if: always() && needs.fetch-results.result == 'success'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull latest changes
-        run: git pull origin main || true
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          playwright install chromium
-
-      - name: Run evaluation
-        run: python scripts/evaluate_predictions.py
-
-      - name: Commit evaluation results
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add data/evaluation_cache/
-          git diff --staged --quiet || git commit -m "Update prediction evaluation (Week ${{ needs.fetch-results.outputs.current_week }})"
-          git pull --rebase origin main || true
-          git push
-
-  # Step 4: Trigger Render deploy
+  # Step 3: Trigger Render deploy
   deploy:
-    needs: [fetch-results, run-simulations, evaluate-predictions]
+    needs: [fetch-results, run-simulations]
     if: always() && needs.fetch-results.outputs.has_new_results == 'true'
     runs-on: ubuntu-latest
 
@@ -193,7 +161,7 @@ jobs:
 
   # Summary job
   summary:
-    needs: [fetch-results, run-simulations, evaluate-predictions, deploy]
+    needs: [fetch-results, run-simulations, deploy]
     if: always()
     runs-on: ubuntu-latest
 
@@ -211,5 +179,4 @@ jobs:
           echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Fetch Results | ${{ needs.fetch-results.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| 100M Simulations | ${{ needs.run-simulations.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Evaluate Predictions | ${{ needs.evaluate-predictions.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Deploy | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY

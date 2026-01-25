@@ -110,7 +110,7 @@ export default function Analytics() {
   React.useEffect(() => {
     if (allTeams.length > 0 && selectedTeams.length === 0) {
       // Select the title contenders by default
-      const defaultTeams = ['Arsenal', 'Liverpool', 'Man City']
+      const defaultTeams = ['Arsenal', 'Aston Villa', 'Manchester City']
         .filter(t => allTeams.includes(t));
       setSelectedTeams(defaultTeams);
     }
