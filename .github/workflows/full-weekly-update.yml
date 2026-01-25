@@ -1,0 +1,215 @@
+name: Full Weekly Update
+
+on:
+  # Manual trigger only - this is the "do everything" button
+  workflow_dispatch:
+    inputs:
+      force_simulations:
+        description: 'Force 100M simulations even if no new results'
+        required: false
+        default: false
+        type: boolean
+      skip_simulations:
+        description: 'Skip 100M simulations (faster, uses cached data)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  # Step 1: Fetch latest match results
+  fetch-results:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      has_new_results: ${{ steps.fetch.outputs.has_new }}
+      current_week: ${{ steps.fetch.outputs.week }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Get current results count
+        id: before
+        run: |
+          COUNT=$(python -c "import sqlite3; conn = sqlite3.connect('data/motson.db'); c = conn.cursor(); c.execute('SELECT COUNT(*) FROM match_results'); print(c.fetchone()[0])")
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+
+      - name: Fetch latest results from API
+        env:
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+        run: python scripts/fetch_results.py
+
+      - name: Check for new results
+        id: fetch
+        run: |
+          COUNT=$(python -c "import sqlite3; conn = sqlite3.connect('data/motson.db'); c = conn.cursor(); c.execute('SELECT COUNT(*) FROM match_results'); print(c.fetchone()[0])")
+          WEEK=$(python -c "import sqlite3; conn = sqlite3.connect('data/motson.db'); c = conn.cursor(); c.execute('SELECT MAX(matchweek) FROM match_results'); print(c.fetchone()[0] or 0)")
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "week=$WEEK" >> $GITHUB_OUTPUT
+
+          if [ "$COUNT" -gt "${{ steps.before.outputs.count }}" ]; then
+            echo "has_new=true" >> $GITHUB_OUTPUT
+            echo "✅ New results found!"
+          else
+            echo "has_new=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ No new results"
+          fi
+
+      - name: Commit results if new
+        if: steps.fetch.outputs.has_new == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add data/motson.db
+          git diff --staged --quiet || git commit -m "Update match results (Week ${{ steps.fetch.outputs.week }})"
+          git pull --rebase origin main || true
+          git push
+
+  # Step 2: Run 100M simulations (if enabled and results changed)
+  run-simulations:
+    needs: fetch-results
+    if: |
+      inputs.skip_simulations != true &&
+      (needs.fetch-results.outputs.has_new_results == 'true' || inputs.force_simulations == true)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull latest changes
+        run: git pull origin main || true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run 100M simulations
+        run: |
+          echo "🎰 Starting 100M simulation run..."
+          python scripts/run_100m_sims.py
+          echo "✅ Simulations complete!"
+
+      - name: Update season_predictions table
+        run: python scripts/sync_100m_to_db.py
+
+      - name: Commit simulation results
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add data/100m_simulation_results.json data/motson.db
+          git diff --staged --quiet || git commit -m "Update 100M simulation results (Week ${{ needs.fetch-results.outputs.current_week }})"
+          git pull --rebase origin main || true
+          git push
+
+  # Step 3: Evaluate predictions
+  evaluate-predictions:
+    needs: [fetch-results, run-simulations]
+    if: always() && needs.fetch-results.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull latest changes
+        run: git pull origin main || true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          playwright install chromium
+
+      - name: Run evaluation
+        run: python scripts/evaluate_predictions.py
+
+      - name: Commit evaluation results
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add data/evaluation_cache/
+          git diff --staged --quiet || git commit -m "Update prediction evaluation (Week ${{ needs.fetch-results.outputs.current_week }})"
+          git pull --rebase origin main || true
+          git push
+
+  # Step 4: Trigger Render deploy
+  deploy:
+    needs: [fetch-results, run-simulations, evaluate-predictions]
+    if: always() && needs.fetch-results.outputs.has_new_results == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger Render deploy
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -n "$RENDER_DEPLOY_HOOK" ]; then
+            echo "🚀 Triggering Render redeploy..."
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$RENDER_DEPLOY_HOOK")
+            if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
+              echo "✅ Render deploy triggered successfully!"
+            else
+              echo "⚠️ Render deploy may have failed (HTTP $HTTP_CODE)"
+            fi
+          else
+            echo "ℹ️ No RENDER_DEPLOY_HOOK secret set, skipping deploy"
+          fi
+
+  # Summary job
+  summary:
+    needs: [fetch-results, run-simulations, evaluate-predictions, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Generate Summary
+        run: |
+          echo "## 🏆 Full Weekly Update Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Results" >> $GITHUB_STEP_SUMMARY
+          echo "- **Current Week:** ${{ needs.fetch-results.outputs.current_week }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **New Results Found:** ${{ needs.fetch-results.outputs.has_new_results }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Job Status" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Fetch Results | ${{ needs.fetch-results.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 100M Simulations | ${{ needs.run-simulations.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Evaluate Predictions | ${{ needs.evaluate-predictions.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
