@@ -1,0 +1,130 @@
+{
+  "teams": {
+    "Manchester City": {
+      "theta_mean": 0.3514,
+      "theta_sd": 0.08926723923142241,
+      "recommended_se": 0.10755761246885316,
+      "n_seasons": 5
+    },
+    "Liverpool": {
+      "theta_mean": 0.2678,
+      "theta_sd": 0.10358455483323757,
+      "recommended_se": 0.11970697556951308,
+      "n_seasons": 5
+    },
+    "Arsenal": {
+      "theta_mean": 0.207,
+      "theta_sd": 0.12606664903930778,
+      "recommended_se": 0.13961661792207974,
+      "n_seasons": 5
+    },
+    "Manchester Utd": {
+      "theta_mean": 0.12220000000000002,
+      "theta_sd": 0.07701532315065619,
+      "recommended_se": 0.09762868430947945,
+      "n_seasons": 5
+    },
+    "Chelsea": {
+      "theta_mean": 0.10980000000000001,
+      "theta_sd": 0.08767302891995918,
+      "recommended_se": 0.1062382228767029,
+      "n_seasons": 5
+    },
+    "Tottenham": {
+      "theta_mean": 0.084,
+      "theta_sd": 0.054990908339470075,
+      "recommended_se": 0.08138795979750321,
+      "n_seasons": 5
+    },
+    "Aston Villa": {
+      "theta_mean": 0.05,
+      "theta_sd": 0.1213260071048248,
+      "recommended_se": 0.13535139452550904,
+      "n_seasons": 5
+    },
+    "Newcastle Utd": {
+      "theta_mean": 0.042,
+      "theta_sd": 0.09516301802696256,
+      "recommended_se": 0.11249888888340187,
+      "n_seasons": 5
+    },
+    "West Ham": {
+      "theta_mean": -0.006,
+      "theta_sd": 0.071442284397967,
+      "recommended_se": 0.0932952303175248,
+      "n_seasons": 5
+    },
+    "Brighton": {
+      "theta_mean": -0.016,
+      "theta_sd": 0.09583318840568751,
+      "recommended_se": 0.11306635220082056,
+      "n_seasons": 5
+    },
+    "Bournemouth": {
+      "theta_mean": -0.06333333333333332,
+      "theta_sd": 0.04189935029992178,
+      "recommended_se": 0.08,
+      "n_seasons": 3
+    },
+    "Crystal Palace": {
+      "theta_mean": -0.06799999999999999,
+      "theta_sd": 0.04995998398718718,
+      "recommended_se": 0.08,
+      "n_seasons": 5
+    },
+    "Fulham": {
+      "theta_mean": -0.08625,
+      "theta_sd": 0.07963785218098238,
+      "recommended_se": 0.09971051850231248,
+      "n_seasons": 4
+    },
+    "Leicester": {
+      "theta_mean": -0.09,
+      "theta_sd": 0.16793451104522858,
+      "recommended_se": 0.17833115263464205,
+      "n_seasons": 4
+    },
+    "Brentford": {
+      "theta_mean": -0.09,
+      "theta_sd": 0.0714142842854285,
+      "recommended_se": 0.09327379053088815,
+      "n_seasons": 4
+    },
+    "Wolves": {
+      "theta_mean": -0.096,
+      "theta_sd": 0.05122499389946279,
+      "recommended_se": 0.08,
+      "n_seasons": 5
+    },
+    "Everton": {
+      "theta_mean": -0.1302,
+      "theta_sd": 0.055607193779222484,
+      "recommended_se": 0.08180562327859864,
+      "n_seasons": 5
+    },
+    "Leeds": {
+      "theta_mean": -0.13033333333333333,
+      "theta_sd": 0.0930244890099137,
+      "recommended_se": 0.11069577930325779,
+      "n_seasons": 3
+    },
+    "Nott'ham Forest": {
+      "theta_mean": -0.19666666666666666,
+      "theta_sd": 0.03299831645537222,
+      "recommended_se": 0.08,
+      "n_seasons": 3
+    },
+    "Burnley": {
+      "theta_mean": -0.22966666666666669,
+      "theta_sd": 0.02898658693641289,
+      "recommended_se": 0.08,
+      "n_seasons": 3
+    },
+    "Southampton": {
+      "theta_mean": -0.257,
+      "theta_sd": 0.1271573827978541,
+      "recommended_se": 0.14060227594174995,
+      "n_seasons": 4
+    }
+  }
+}

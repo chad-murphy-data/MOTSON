@@ -554,6 +554,9 @@ async def get_historical_points():
     if not predictions_history:
         raise HTTPException(status_code=404, detail="No historical data available - run update first")
 
+    # Filter out Week 0 - preseason data often has issues
+    predictions_history = [p for p in predictions_history if p["week"] > 0]
+
     # Build lookup for actual points by (team, week)
     actual_points_lookup = {}
     for record in state_history:
@@ -644,6 +647,9 @@ async def get_historical_title_race():
     if not predictions:
         raise HTTPException(status_code=404, detail="No historical predictions available - run update first")
 
+    # Filter out Week 0 - preseason data often has unnormalized probabilities
+    predictions = [p for p in predictions if p["week"] > 0]
+
     # Group by team
     teams_data = {}
     for record in predictions:
@@ -666,6 +672,122 @@ async def get_historical_title_race():
         "history": teams_data,
         "weeks": sorted(set(r["week"] for r in predictions)),
     }
+
+
+# Coaching data endpoints
+
+@app.get("/coaching/current")
+async def get_current_coaches():
+    """Get current coach for each team."""
+    db = get_db()
+    coaches = db.get_current_coaches()
+
+    if not coaches:
+        raise HTTPException(status_code=404, detail="No coaching data available - run fetch_coaches.py first")
+
+    return {"coaches": coaches}
+
+
+@app.get("/coaching/changes")
+async def get_coaching_changes():
+    """Get all coaching changes this season (excluding initial appointments)."""
+    db = get_db()
+    changes = db.get_coaching_changes()
+
+    return {"changes": changes}
+
+
+@app.get("/coaching/history/{team}")
+async def get_team_coaching_history(team: str):
+    """Get coaching history for a specific team with theta trajectory overlay data."""
+    db = get_db()
+
+    # Get coaching history
+    coaches = db.get_coaching_history(team)
+    if not coaches:
+        raise HTTPException(status_code=404, detail=f"No coaching data for team: {team}")
+
+    # Get theta history for this team
+    theta_history = db.get_irt_team_history(team)
+
+    # For each coaching tenure, calculate stats
+    for coach in coaches:
+        week_start = coach["week_started"]
+        week_end = coach["week_ended"] if coach["week_ended"] else 999
+
+        # Get theta values during this tenure
+        tenure_thetas = [
+            h for h in theta_history
+            if week_start <= h["week"] <= week_end
+        ]
+
+        if tenure_thetas:
+            thetas = [t["theta"] for t in tenure_thetas]
+            coach["theta_start"] = thetas[0] if thetas else None
+            coach["theta_end"] = thetas[-1] if thetas else None
+            coach["theta_change"] = (thetas[-1] - thetas[0]) if len(thetas) > 1 else 0
+            coach["games_in_tenure"] = len(tenure_thetas)
+        else:
+            coach["theta_start"] = None
+            coach["theta_end"] = None
+            coach["theta_change"] = None
+            coach["games_in_tenure"] = 0
+
+    return {
+        "team": team,
+        "coaches": coaches,
+        "theta_history": theta_history,
+    }
+
+
+@app.get("/coaching/impact")
+async def get_coaching_impact():
+    """Get coaching changes with before/after theta comparison."""
+    db = get_db()
+    changes = db.get_coaching_changes()
+
+    # Get all theta history
+    all_history = db.get_all_irt_teams_history()
+
+    # Build lookup by (team, week)
+    theta_lookup = {}
+    for h in all_history:
+        theta_lookup[(h["team"], h["week"])] = h["theta"]
+
+    # Calculate impact for each change
+    impact_data = []
+    for change in changes:
+        team = change["team"]
+        change_week = change["week_started"]
+
+        # Get theta before change (3-week average if available)
+        thetas_before = [
+            theta_lookup.get((team, w))
+            for w in range(max(1, change_week - 3), change_week)
+        ]
+        thetas_before = [t for t in thetas_before if t is not None]
+
+        # Get theta after change (3-week average if available)
+        thetas_after = [
+            theta_lookup.get((team, w))
+            for w in range(change_week, change_week + 4)
+        ]
+        thetas_after = [t for t in thetas_after if t is not None]
+
+        theta_before = sum(thetas_before) / len(thetas_before) if thetas_before else None
+        theta_after = sum(thetas_after) / len(thetas_after) if thetas_after else None
+
+        impact_data.append({
+            "team": team,
+            "week": change_week,
+            "old_coach": change.get("previous_coach"),
+            "new_coach": change["coach_name"],
+            "theta_before": theta_before,
+            "theta_after": theta_after,
+            "theta_change": (theta_after - theta_before) if (theta_before and theta_after) else None,
+        })
+
+    return {"coaching_impacts": impact_data}
 
 
 # Counterfactual simulation

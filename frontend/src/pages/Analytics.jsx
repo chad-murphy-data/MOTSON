@@ -14,7 +14,7 @@ import {
   Cell,
   ReferenceLine,
 } from 'recharts';
-import { TrendingUp, Activity, Grid3X3, Trophy, Scale } from 'lucide-react';
+import { TrendingUp, Activity, Grid3X3, Trophy, Scale, Users } from 'lucide-react';
 
 import {
   getHistoricalPoints,
@@ -22,31 +22,30 @@ import {
   getHistoricalTitleRace,
   getIRT100MPositions,
   getIRTTeams,
+  getCoachingImpact,
 } from '../api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorMessage from '../components/ErrorMessage';
 
-// Team colors for the charts
+// Team colors for the charts - keys match database team names
 const TEAM_COLORS = {
   'Arsenal': '#EF0107',
-  'Aston Villa': '#95BFE5',
+  'Aston Villa': '#670E36',  // Claret (primary)
   'Bournemouth': '#DA291C',
   'Brentford': '#E30613',
   'Brighton': '#0057B8',
+  'Burnley': '#6C1D45',  // Claret
   'Chelsea': '#034694',
   'Crystal Palace': '#1B458F',
   'Everton': '#003399',
   'Fulham': '#000000',
-  'Ipswich': '#0044AA',
-  'Leicester': '#003090',
+  'Leeds United': '#FFCD00',  // Yellow
   'Liverpool': '#C8102E',
-  'Man City': '#6CABDD',
-  'Man United': '#DA291C',
-  'Newcastle': '#241F20',
-  'Nottingham Forest': '#DD0000',
-  "Nott'm Forest": '#DD0000',
-  'Southampton': '#D71920',
-  'Spurs': '#132257',
+  'Manchester City': '#6CABDD',
+  'Manchester Utd': '#DA291C',
+  'Newcastle Utd': '#241F20',
+  "Nott'ham Forest": '#DD0000',
+  'Sunderland': '#EB172B',  // Red
   'Tottenham': '#132257',
   'West Ham': '#7A263A',
   'Wolves': '#FDB913',
@@ -57,7 +56,7 @@ const getTeamColor = (team) => {
 };
 
 export default function Analytics() {
-  const [view, setView] = React.useState('title'); // 'title', 'points', 'strength', 'heatmap', 'deviation'
+  const [view, setView] = React.useState('title'); // 'title', 'points', 'strength', 'heatmap', 'deviation', 'coaches'
   const [selectedTeams, setSelectedTeams] = React.useState([]);
 
   const pointsQuery = useQuery({
@@ -85,16 +84,24 @@ export default function Analytics() {
     queryFn: getIRTTeams,
   });
 
+  const coachingQuery = useQuery({
+    queryKey: ['coachingImpact'],
+    queryFn: getCoachingImpact,
+    enabled: view === 'coaches',
+  });
+
   const isLoading = view === 'title' ? titleRaceQuery.isLoading
     : view === 'points' ? pointsQuery.isLoading
     : view === 'strength' ? strengthQuery.isLoading
     : view === 'deviation' ? teamsQuery.isLoading
+    : view === 'coaches' ? coachingQuery.isLoading
     : positionsQuery.isLoading;
 
   const error = view === 'title' ? titleRaceQuery.error
     : view === 'points' ? pointsQuery.error
     : view === 'strength' ? strengthQuery.error
     : view === 'deviation' ? teamsQuery.error
+    : view === 'coaches' ? coachingQuery.error
     : positionsQuery.error;
 
   // Get all available teams
@@ -171,6 +178,13 @@ export default function Analytics() {
           label="Performance vs Expected"
           color="primary"
         />
+        <ViewButton
+          active={view === 'coaches'}
+          onClick={() => setView('coaches')}
+          icon={Users}
+          label="Coaching Changes"
+          color="primary"
+        />
       </div>
 
       {isLoading ? (
@@ -187,6 +201,8 @@ export default function Analytics() {
         <PositionHeatmap data={positionsQuery.data} />
       ) : view === 'deviation' ? (
         <PerformanceDeviationChart data={teamsQuery.data} />
+      ) : view === 'coaches' ? (
+        <CoachingChangesChart data={coachingQuery.data} strengthData={strengthQuery.data} />
       ) : (
         <>
           {/* Team Selector */}
@@ -257,6 +273,7 @@ export default function Analytics() {
             {view === 'strength' && 'Team Strength (Theta)'}
             {view === 'heatmap' && 'Position Probability Heatmap'}
             {view === 'deviation' && 'Performance vs Expected Points'}
+            {view === 'coaches' && 'Coaching Changes Impact'}
           </h3>
           <p className="text-sm text-slate-600">
             {view === 'title' &&
@@ -269,6 +286,8 @@ export default function Analytics() {
               'Each cell shows the probability of a team finishing in that position. Darker red indicates higher probability. Teams are ordered by expected final position.'}
             {view === 'deviation' &&
               'Shows how each team is performing relative to what the model expected given their strength (theta). Positive values (green) indicate over-performance - the team has earned more points than expected. Negative values (red) indicate under-performance. Large deviations may suggest luck, injuries, or factors the model hasn\'t captured.'}
+            {view === 'coaches' &&
+              'Tracks managerial changes throughout the season and their impact on team strength (theta). The chart shows theta before and after each coaching change, helping visualize whether new managers improved or declined team performance.'}
           </p>
         </div>
       </div>
@@ -781,6 +800,195 @@ function PerformanceDeviationChart({ data }) {
           <div className="flex items-center gap-2">
             <div className="w-4 h-4 rounded" style={{ backgroundColor: '#ef4444' }} />
             <span>Under-performing</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CoachingChangesChart({ data, strengthData }) {
+  if (!data?.coaching_impacts) {
+    return (
+      <div className="card">
+        <div className="card-body text-center py-8">
+          <p className="text-slate-500 mb-2">No coaching changes recorded yet</p>
+          <p className="text-xs text-slate-400">
+            Run fetch_coaches.py to initialize coaching data.
+            Changes will be tracked automatically in the weekly update.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const impacts = data.coaching_impacts;
+
+  if (impacts.length === 0) {
+    return (
+      <div className="card">
+        <div className="card-body text-center py-8">
+          <p className="text-slate-500 mb-2">No managerial changes this season</p>
+          <p className="text-xs text-slate-400">
+            When a team changes managers, the impact on their theta will appear here.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Prepare chart data
+  const chartData = impacts
+    .filter(i => i.theta_before !== null && i.theta_after !== null)
+    .map(i => ({
+      team: i.team,
+      oldCoach: i.old_coach || 'Previous',
+      newCoach: i.new_coach,
+      week: i.week,
+      thetaBefore: i.theta_before,
+      thetaAfter: i.theta_after,
+      thetaChange: i.theta_change,
+    }))
+    .sort((a, b) => b.thetaChange - a.thetaChange);
+
+  return (
+    <div className="space-y-6">
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="card bg-slate-50">
+          <div className="card-body text-center">
+            <div className="text-3xl font-bold text-slate-900">{impacts.length}</div>
+            <div className="text-sm text-slate-500">Coaching Changes</div>
+          </div>
+        </div>
+        <div className="card bg-green-50">
+          <div className="card-body text-center">
+            <div className="text-3xl font-bold text-green-600">
+              {chartData.filter(c => c.thetaChange > 0).length}
+            </div>
+            <div className="text-sm text-slate-500">Improved After Change</div>
+          </div>
+        </div>
+        <div className="card bg-red-50">
+          <div className="card-body text-center">
+            <div className="text-3xl font-bold text-red-600">
+              {chartData.filter(c => c.thetaChange < 0).length}
+            </div>
+            <div className="text-sm text-slate-500">Declined After Change</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Impact Chart */}
+      {chartData.length > 0 && (
+        <div className="card">
+          <div className="card-header">
+            <h2 className="font-semibold text-slate-900">Theta Change After Manager Appointment</h2>
+            <p className="text-xs text-slate-500 mt-1">
+              Comparing 3-week average theta before and after each coaching change
+            </p>
+          </div>
+          <div className="card-body">
+            <ResponsiveContainer width="100%" height={Math.max(300, chartData.length * 60)}>
+              <BarChart
+                data={chartData}
+                layout="vertical"
+                margin={{ top: 10, right: 30, left: 120, bottom: 10 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={true} vertical={false} />
+                <XAxis
+                  type="number"
+                  tick={{ fontSize: 12, fill: '#64748b' }}
+                  axisLine={{ stroke: '#e2e8f0' }}
+                  tickFormatter={(value) => `${value > 0 ? '+' : ''}${value.toFixed(2)}`}
+                />
+                <YAxis
+                  type="category"
+                  dataKey="team"
+                  tick={{ fontSize: 12, fill: '#1e293b' }}
+                  axisLine={{ stroke: '#e2e8f0' }}
+                  width={115}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'white',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '8px',
+                  }}
+                  formatter={(value, name, props) => {
+                    const { oldCoach, newCoach, week, thetaBefore, thetaAfter } = props.payload;
+                    return [
+                      <div key="tooltip" className="text-sm">
+                        <div className="font-semibold mb-1">
+                          {oldCoach} {'->'} {newCoach}
+                        </div>
+                        <div className="text-slate-500 text-xs">
+                          Week {week}
+                        </div>
+                        <div className="mt-1 text-xs">
+                          Before: {thetaBefore.toFixed(3)} | After: {thetaAfter.toFixed(3)}
+                        </div>
+                        <div className={`font-semibold ${value > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          Change: {value > 0 ? '+' : ''}{value.toFixed(3)}
+                        </div>
+                      </div>,
+                      ''
+                    ];
+                  }}
+                />
+                <ReferenceLine x={0} stroke="#94a3b8" strokeWidth={2} />
+                <Bar dataKey="thetaChange" radius={[0, 4, 4, 0]}>
+                  {chartData.map((entry, index) => (
+                    <Cell
+                      key={`cell-${index}`}
+                      fill={entry.thetaChange >= 0 ? '#10b981' : '#ef4444'}
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Detailed List */}
+      <div className="card">
+        <div className="card-header">
+          <h2 className="font-semibold text-slate-900">Coaching Change Details</h2>
+        </div>
+        <div className="card-body">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200">
+                  <th className="text-left py-2 px-3 font-medium text-slate-600">Team</th>
+                  <th className="text-left py-2 px-3 font-medium text-slate-600">Week</th>
+                  <th className="text-left py-2 px-3 font-medium text-slate-600">Previous Manager</th>
+                  <th className="text-left py-2 px-3 font-medium text-slate-600">New Manager</th>
+                  <th className="text-right py-2 px-3 font-medium text-slate-600">Theta Change</th>
+                </tr>
+              </thead>
+              <tbody>
+                {impacts.map((change, i) => (
+                  <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="py-2 px-3 font-medium" style={{ color: getTeamColor(change.team) }}>
+                      {change.team}
+                    </td>
+                    <td className="py-2 px-3">{change.week}</td>
+                    <td className="py-2 px-3 text-slate-500">{change.old_coach || '-'}</td>
+                    <td className="py-2 px-3">{change.new_coach}</td>
+                    <td className={`py-2 px-3 text-right font-medium ${
+                      change.theta_change > 0 ? 'text-green-600' :
+                      change.theta_change < 0 ? 'text-red-600' : 'text-slate-400'
+                    }`}>
+                      {change.theta_change !== null
+                        ? `${change.theta_change > 0 ? '+' : ''}${change.theta_change.toFixed(3)}`
+                        : 'Pending'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>

@@ -105,3 +105,10 @@ export const runIRTCounterfactual = (scenarios, nSimulations = 10000) =>
   });
 export const getIRTRivalries = (nSimulations = 100000) =>
   fetchApi(`/irt/simulation/rivalries?n_simulations=${nSimulations}`);
+
+// Coaching data endpoints
+export const getCurrentCoaches = () => fetchApi('/coaching/current');
+export const getCoachingChanges = () => fetchApi('/coaching/changes');
+export const getCoachingHistory = (teamName) =>
+  fetchApi(`/coaching/history/${encodeURIComponent(teamName)}`);
+export const getCoachingImpact = () => fetchApi('/coaching/impact');

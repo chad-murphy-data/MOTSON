@@ -241,6 +241,35 @@ class Database:
         except sqlite3.OperationalError:
             pass  # Columns already exist
 
+        # Coaching history (track manager changes and their impact)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS coaching_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                team TEXT,
+                coach_name TEXT,
+                coach_id INTEGER,
+                week_started INTEGER,
+                week_ended INTEGER,
+                first_seen_date TEXT,
+                last_seen_date TEXT,
+                is_current INTEGER,
+                UNIQUE(team, coach_id, week_started)
+            )
+        """)
+
+        # Coaching snapshots (current coach per team per week for change detection)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS coaching_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                team TEXT,
+                week INTEGER,
+                coach_name TEXT,
+                coach_id INTEGER,
+                snapshot_date TEXT,
+                UNIQUE(team, week)
+            )
+        """)
+
         conn.commit()
         conn.close()
 
@@ -844,6 +873,137 @@ class Database:
         cursor.execute("""
             SELECT * FROM irt_team_state_history
             ORDER BY week, team
+        """)
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [dict(row) for row in rows]
+
+
+    # Coaching History
+
+    def save_coaching_snapshot(self, team: str, week: int, coach_name: str, coach_id: int):
+        """Save a coaching snapshot for change detection."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO coaching_snapshots
+            (team, week, coach_name, coach_id, snapshot_date)
+            VALUES (?, ?, ?, ?, ?)
+        """, (team, week, coach_name, coach_id, datetime.utcnow().isoformat()))
+
+        conn.commit()
+        conn.close()
+
+    def get_coaching_snapshot(self, team: str, week: int) -> Optional[Dict]:
+        """Get coaching snapshot for a team at a specific week."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT * FROM coaching_snapshots
+            WHERE team = ? AND week = ?
+        """, (team, week))
+
+        row = cursor.fetchone()
+        conn.close()
+
+        return dict(row) if row else None
+
+    def get_latest_coaching_snapshot(self, team: str) -> Optional[Dict]:
+        """Get the most recent coaching snapshot for a team."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT * FROM coaching_snapshots
+            WHERE team = ?
+            ORDER BY week DESC
+            LIMIT 1
+        """, (team,))
+
+        row = cursor.fetchone()
+        conn.close()
+
+        return dict(row) if row else None
+
+    def save_coaching_change(self, team: str, coach_name: str, coach_id: int, week: int):
+        """Record a coaching change."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # End the previous coach's tenure
+        cursor.execute("""
+            UPDATE coaching_history
+            SET week_ended = ?, is_current = 0, last_seen_date = ?
+            WHERE team = ? AND is_current = 1
+        """, (week - 1, datetime.utcnow().isoformat(), team))
+
+        # Insert new coach
+        cursor.execute("""
+            INSERT INTO coaching_history
+            (team, coach_name, coach_id, week_started, first_seen_date, is_current)
+            VALUES (?, ?, ?, ?, ?, 1)
+        """, (team, coach_name, coach_id, week, datetime.utcnow().isoformat()))
+
+        conn.commit()
+        conn.close()
+
+    def get_coaching_history(self, team: str = None) -> List[Dict]:
+        """Get coaching history, optionally filtered by team."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        if team:
+            cursor.execute("""
+                SELECT * FROM coaching_history
+                WHERE team = ?
+                ORDER BY week_started DESC
+            """, (team,))
+        else:
+            cursor.execute("""
+                SELECT * FROM coaching_history
+                ORDER BY week_started DESC, team
+            """)
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [dict(row) for row in rows]
+
+    def get_coaching_changes(self) -> List[Dict]:
+        """Get all coaching changes (excluding initial appointments)."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # A change is when a coach started after week 0
+        cursor.execute("""
+            SELECT ch.*,
+                   prev.coach_name as previous_coach
+            FROM coaching_history ch
+            LEFT JOIN coaching_history prev
+                ON ch.team = prev.team
+                AND prev.week_ended = ch.week_started - 1
+            WHERE ch.week_started > 0
+            ORDER BY ch.week_started DESC, ch.team
+        """)
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [dict(row) for row in rows]
+
+    def get_current_coaches(self) -> List[Dict]:
+        """Get current coach for each team."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT * FROM coaching_history
+            WHERE is_current = 1
+            ORDER BY team
         """)
 
         rows = cursor.fetchall()

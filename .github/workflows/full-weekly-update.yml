@@ -63,6 +63,11 @@ jobs:
           FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
         run: python scripts/fetch_results.py
 
+      - name: Fetch and track coaching changes
+        env:
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+        run: python scripts/fetch_coaches.py
+
       - name: Check for new results
         id: fetch
         run: |
@@ -126,6 +131,12 @@ jobs:
 
       - name: Update season_predictions table
         run: python scripts/sync_100m_to_db.py
+
+      - name: Sync actual points to all tables
+        run: python scripts/sync_actual_points.py
+
+      - name: Run prediction evaluation
+        run: python scripts/evaluate_predictions.py --refresh || echo "Evaluation had warnings but continuing..."
 
       - name: Commit simulation results
         run: |

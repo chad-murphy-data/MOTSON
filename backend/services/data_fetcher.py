@@ -257,6 +257,28 @@ class FootballDataAPI:
 
         return standings
 
+    async def get_teams(self, season: int = None) -> List[Dict]:
+        """Get all teams in the competition with coach info."""
+        season = season or app_config.CURRENT_SEASON
+
+        data = await self._get(
+            f"/competitions/{app_config.COMPETITION_CODE}/teams",
+            {"season": season}
+        )
+
+        teams = []
+        for t in data.get("teams", []):
+            coach = t.get("coach", {})
+            teams.append({
+                "team": self._normalize_team_name(t["name"]),
+                "team_id": t.get("id"),
+                "coach_name": coach.get("name") if coach else None,
+                "coach_id": coach.get("id") if coach else None,
+                "coach_nationality": coach.get("nationality") if coach else None,
+            })
+
+        return teams
+
 
 # Synchronous wrapper for non-async contexts
 def fetch_finished_matches(api_key: str = None, season: int = None) -> List[MatchResult]:
@@ -275,3 +297,9 @@ def fetch_standings(api_key: str = None, season: int = None) -> List[Dict]:
     """Synchronous wrapper for get_standings."""
     api = FootballDataAPI(api_key)
     return asyncio.run(api.get_standings(season))
+
+
+def fetch_teams(api_key: str = None, season: int = None) -> List[Dict]:
+    """Synchronous wrapper for get_teams."""
+    api = FootballDataAPI(api_key)
+    return asyncio.run(api.get_teams(season))
